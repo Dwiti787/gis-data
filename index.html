@@ -1,0 +1,1387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Layer Grabber – view an ArcGIS layer and download SHP / KML / KMZ</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<style>
+:root{
+  --ink:#14222d; --ink-2:#22394a; --paper:#f4f6f4; --panel:#fdfdfc; --line:#d8ddda;
+  --muted:#5b6d79; --accent:#0f766e; --accent-d:#0b5a54; --accent-l:#e1f0ee;
+  --warn:#9a5b00; --err:#b42318; --sel:#f5b301;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font:14px/1.4 "Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;color:var(--ink);background:var(--paper);overflow:hidden}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+[hidden]{display:none !important}
+
+#app{display:flex;flex-direction:column;height:100%}
+
+/* ---------- top bar ---------- */
+.top{background:var(--ink);color:#e7eef1;display:flex;gap:18px;align-items:center;padding:9px 14px}
+.brand{display:flex;align-items:center;gap:10px;white-space:nowrap}
+.brand b{font-size:17px;font-weight:650;letter-spacing:.2px}
+.brand span{color:#9fb4c0;font-size:12.5px}
+.urlbar{flex:1;display:flex;gap:8px;min-width:0}
+.urlbar input{background:#0d1922;border:1px solid #38505f;color:#eef4f6;border-radius:5px;padding:8px 10px;min-width:0}
+.urlbar input::placeholder{color:#7f97a4}
+#urlInput{flex:1}
+#tokenInput{width:170px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:5px;padding:7px 13px;font-weight:550}
+.btn:hover{background:#f0f3f1}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{background:var(--accent-d)}
+.btn:disabled{opacity:.55;cursor:not-allowed}
+.top .btn.ghost{background:transparent;border-color:#38505f;color:#d4e0e5}
+.top .btn.ghost:hover{background:#1f3341}
+#busy{height:3px;background:transparent;position:relative;overflow:hidden}
+#busy.on::after{content:"";position:absolute;inset:0;width:35%;background:var(--sel);animation:slide 1.1s linear infinite}
+@keyframes slide{from{left:-35%}to{left:100%}}
+@media (prefers-reduced-motion:reduce){#busy.on::after{animation:none;width:100%}}
+
+/* ---------- ribbon ---------- */
+.ribbon{display:flex;gap:0;background:#eaeeeb;border-bottom:1px solid var(--line);padding:0 8px;overflow-x:auto}
+.grp{display:flex;flex-direction:column;padding:5px 12px 3px;border-right:1px solid var(--line);flex:none}
+.grp:last-child{border-right:0}
+.grp-btns{display:flex;gap:2px;align-items:flex-start;flex:1}
+.grp-cap{font-size:11.5px;color:var(--muted);text-align:center;padding-top:2px}
+.tool{display:flex;flex-direction:column;align-items:center;gap:3px;background:transparent;border:1px solid transparent;border-radius:5px;padding:5px 9px;min-width:64px;font-size:12px}
+.tool:hover{background:#dde5e1;border-color:#cbd5d0}
+.tool.on{background:var(--accent-l);border-color:var(--accent)}
+.tool svg{width:22px;height:22px;fill:none;stroke:var(--ink-2);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.tool.dl svg{stroke:var(--accent-d)}
+.tool select{border:1px solid var(--line);border-radius:4px;padding:5px 6px;background:#fff;max-width:170px}
+.tool input[type=text]{border:1px solid var(--line);border-radius:4px;padding:5px 7px;background:#fff;width:186px}
+.tool.proxy-on select{background:var(--accent-l);border-color:var(--accent)}
+.only-narrow{display:none}
+
+/* ---------- workspace ---------- */
+.workspace{flex:1;display:flex;min-height:0;position:relative}
+#contents{width:330px;flex:none;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+#contents h2{margin:0;padding:10px 14px;font-size:14px;border-bottom:1px solid var(--line);background:#f0f3f1}
+#layerList{flex:1;overflow:auto;padding:10px}
+.empty{color:var(--muted);padding:14px 6px;line-height:1.5}
+.card{border:1px solid var(--line);border-left:4px solid var(--accent);background:#fff;border-radius:4px;margin-bottom:10px}
+.card.active{box-shadow:0 0 0 2px var(--accent-l);border-color:#bcd7d3;border-left-color:var(--accent)}
+.card-head{display:flex;gap:8px;align-items:center;padding:8px 8px 6px}
+.card-head input[type=checkbox]{width:16px;height:16px;flex:none}
+.sw{width:22px;height:16px;border-radius:2px;flex:none;border:2px solid #000}
+.card-title{flex:1;min-width:0;cursor:pointer}
+.card-title b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card-title small{color:var(--muted);font-size:12px}
+.card .note{padding:0 10px 8px 38px;font-size:12px;color:var(--muted)}
+.card .note.warn{color:var(--warn)} .card .note.err{color:var(--err)}
+.icon-btn{border:0;background:transparent;font-size:15px;padding:2px 6px;border-radius:4px;color:var(--muted)}
+.icon-btn:hover{background:#eef1ef}
+.card-body{border-top:1px solid var(--line);padding:10px;display:grid;gap:9px;background:#fafbfa}
+.card-body label{display:grid;grid-template-columns:110px 1fr;gap:8px;align-items:center;font-size:12.5px}
+.card-body input[type=number],.card-body input[type=text]{width:100%;border:1px solid var(--line);border-radius:4px;padding:5px 7px;background:#fff}
+.card-body input[type=color]{width:42px;height:24px;padding:0;border:1px solid var(--line);background:#fff}
+.where-row{display:flex;gap:6px}
+.where-row input{flex:1;min-width:0}
+.card-btns{display:flex;flex-wrap:wrap;gap:6px}
+.card-btns .btn{padding:4px 9px;font-size:12.5px}
+.hint{font-size:12px;color:var(--muted)}
+
+#mapwrap{flex:1;min-width:0;display:flex;flex-direction:column}
+#map{flex:1;min-height:0;background:#dfe6e3}
+#map.drawing canvas{pointer-events:none !important}
+#dock{height:230px;flex:none;background:var(--panel);border-top:2px solid var(--accent);display:flex;flex-direction:column}
+#dock-head{display:flex;align-items:center;gap:10px;padding:6px 12px;background:#f0f3f1;border-bottom:1px solid var(--line);font-weight:600;font-size:13px}
+#dock-head span{font-weight:400;color:var(--muted)}
+#dock-head .sp{flex:1}
+#tableBody{flex:1;overflow:auto}
+#tableBody table{border-collapse:collapse;font-size:12.5px;min-width:100%}
+#tableBody th{position:sticky;top:0;background:#e6ebe8;text-align:left;padding:5px 10px;border-bottom:1px solid var(--line);white-space:nowrap;font-weight:600}
+#tableBody td{padding:4px 10px;border-bottom:1px solid #edf0ee;white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis}
+#tableBody tbody tr{cursor:pointer}
+#tableBody tbody tr:hover{background:var(--accent-l)}
+
+.status{display:flex;gap:18px;align-items:center;background:#e4e9e6;border-top:1px solid var(--line);padding:4px 12px;font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden}
+.status .msg{flex:1;overflow:hidden;text-overflow:ellipsis}
+
+/* popups */
+.leaflet-popup-content{margin:10px 12px;font:13px/1.35 "Segoe UI",system-ui,sans-serif}
+.pop-title{font-weight:650;margin-bottom:6px;color:var(--accent-d)}
+.pop-scroll table{border-collapse:collapse;width:100%}
+.pop-scroll th{text-align:left;font-weight:500;color:var(--muted);padding:2px 10px 2px 0;vertical-align:top;white-space:nowrap}
+.pop-scroll td{padding:2px 0;word-break:break-word}
+.nil{color:#9aa8b0}
+
+/* modal + toast */
+.overlay{position:fixed;inset:0;background:rgba(15,28,38,.55);display:flex;align-items:center;justify-content:center;z-index:3000;padding:14px}
+.modal{background:#fff;border-radius:8px;width:min(620px,100%);max-height:100%;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.modal.wide{width:min(820px,100%)}
+.modal-head{display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line)}
+.modal-head h2{margin:0;font-size:17px;flex:1}
+.x{border:0;background:transparent;font-size:24px;line-height:1;color:var(--muted);padding:0 6px}
+.modal-body{padding:16px 18px;overflow:auto;display:grid;gap:14px}
+.modal-foot{display:flex;gap:8px;align-items:center;padding:12px 18px;border-top:1px solid var(--line);background:#f7f9f8;border-radius:0 0 8px 8px}
+.sp{flex:1}
+.fld{display:grid;gap:5px;font-size:13px}
+.fld .lbl{font-weight:600}
+.fld input[type=text],.fld input[type=number],.fld select{border:1px solid var(--line);border-radius:5px;padding:7px 9px;background:#fff;width:100%}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.seg{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.seg.three{grid-template-columns:1fr}
+.seg label{display:flex;gap:9px;align-items:flex-start;border:1px solid var(--line);border-radius:6px;padding:9px 10px;cursor:pointer}
+.seg label:has(input:checked){border-color:var(--accent);background:var(--accent-l)}
+.seg label:has(input:disabled){opacity:.5;cursor:not-allowed}
+.seg b{display:block}
+.seg i{display:block;font-style:normal;color:var(--muted);font-size:12px}
+.chk{display:flex;gap:8px;align-items:center;font-size:13px}
+.ex-status{min-height:20px;font-size:13px}
+.ex-status.err{color:var(--err)} .ex-status.ok{color:var(--accent-d)} .ex-status.warn{color:var(--warn)}
+.bar{height:8px;background:#e6ebe8;border-radius:5px;overflow:hidden}
+.bar div{height:100%;width:0;background:var(--accent);transition:width .2s}
+.help ol{margin:0;padding-left:20px;display:grid;gap:8px}
+.help p{margin:0}
+.ftable{border-collapse:collapse;width:100%;font-size:13px}
+.ftable th,.ftable td{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left}
+.ftable th{background:#f0f3f1;position:sticky;top:0}
+#toast{position:fixed;left:50%;bottom:44px;transform:translateX(-50%) translateY(20px);background:var(--ink);color:#fff;padding:10px 16px;border-radius:6px;max-width:min(680px,92vw);opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:4000;box-shadow:0 8px 24px rgba(0,0,0,.3)}
+#toast.show{opacity:1;transform:translateX(-50%)}
+#toast.err{background:var(--err)} #toast.warn{background:#7a4a00}
+
+@media (max-width:860px){
+  .brand span{display:none}
+  .top{flex-wrap:wrap;gap:8px}
+  .urlbar{flex-basis:100%;order:3;flex-wrap:wrap}
+  #tokenInput{width:100%}
+  .only-narrow{display:flex}
+  #contents{position:absolute;z-index:1200;top:0;bottom:0;left:0;width:min(330px,88vw);transform:translateX(-101%);transition:transform .2s;box-shadow:4px 0 20px rgba(0,0,0,.25)}
+  #contents.open{transform:none}
+  #dock{height:190px}
+  .row2,.seg{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="top">
+    <div class="brand">
+      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><path d="M3 21 9 5l9 4 7-5-2 18-11 3Z" fill="none" stroke="#5eead4" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 5l2 19M18 9l5 13" stroke="#5eead4" stroke-width="1" opacity=".6"/></svg>
+      <div><b>Layer Grabber</b><br><span>View an ArcGIS layer, then download it</span></div>
+    </div>
+    <div class="urlbar">
+      <input id="urlInput" type="text" spellcheck="false" autocomplete="off" aria-label="ArcGIS layer URL"
+             placeholder="Paste an ArcGIS FeatureServer or MapServer layer URL"
+             value="https://gis.cookcountyil.gov/hosting/rest/services/Hosted/Parcel2021_enhancedAll/FeatureServer/0">
+      <input id="tokenInput" type="password" autocomplete="off" aria-label="Access token" placeholder="Token (private layers only)">
+      <button class="btn primary" id="addBtn">Add to map</button>
+    </div>
+    <button class="btn ghost" id="helpBtn">Help</button>
+  </header>
+  <div id="busy"></div>
+
+  <nav class="ribbon" aria-label="Tools">
+    <div class="grp only-narrow"><div class="grp-btns"><button class="tool" id="btnMenu" data-icon="layers">Layers</button></div><div class="grp-cap">Panel</div></div>
+    <div class="grp"><div class="grp-btns">
+      <button class="tool" id="btnZoomLayer" data-icon="target">Zoom to layer</button>
+      <button class="tool on" id="btnTable" data-icon="table">Attribute table</button>
+    </div><div class="grp-cap">Layer</div></div>
+    <div class="grp"><div class="grp-btns">
+      <button class="tool" id="btnDraw" data-icon="box">Draw box</button>
+      <button class="tool" id="btnClearBox" data-icon="clear">Clear box</button>
+    </div><div class="grp-cap">Select area</div></div>
+    <div class="grp"><div class="grp-btns">
+      <button class="tool dl" data-export="shp" data-icon="down">Shapefile</button>
+      <button class="tool dl" data-export="kml" data-icon="down">KML</button>
+      <button class="tool dl" data-export="kmz" data-icon="down">KMZ</button>
+      <button class="tool dl" data-export="geojson" data-icon="down">GeoJSON</button>
+    </div><div class="grp-cap">Download</div></div>
+    <div class="grp"><div class="grp-btns">
+      <div class="tool"><select id="basemapSel" aria-label="Basemap"></select></div>
+    </div><div class="grp-cap">Basemap</div></div>
+    <div class="grp"><div class="grp-btns">
+      <div class="tool"><select id="proxySel" aria-label="Proxy mode" title="How to reach servers that block browser requests (CORS)">
+        <option value="auto">Auto – retry via proxy</option>
+        <option value="always">Always use proxy</option>
+        <option value="off">Direct only</option>
+      </select></div>
+      <div class="tool"><input id="proxyTpl" type="text" spellcheck="false" autocomplete="off" aria-label="Custom proxy template"
+             placeholder="Custom proxy, use {url}" title="Optional. Example: https://my-proxy.example/?target={url}"></div>
+    </div><div class="grp-cap">Connection</div></div>
+  </nav>
+
+  <div class="workspace">
+    <aside id="contents">
+      <h2>Contents</h2>
+      <div id="layerList"></div>
+    </aside>
+    <main id="mapwrap">
+      <div id="map"></div>
+      <section id="dock">
+        <div id="dock-head"><div id="dockTitle">Attribute table</div><span id="dockSub"></span><div class="sp"></div><button class="icon-btn" id="dockClose" title="Hide table">✕</button></div>
+        <div id="tableBody"></div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="status">
+    <div id="stCoord">Lat/Lon: –</div>
+    <div id="stZoom">Zoom: –</div>
+    <div id="stScale">Scale: –</div>
+    <div class="msg" id="stMsg">Ready. Paste a layer URL above and press “Add to map”.</div>
+  </footer>
+</div>
+
+<!-- Download dialog -->
+<div class="overlay" id="exportModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="exTitle">
+    <div class="modal-head"><h2 id="exTitle">Download data</h2><button class="x" data-close aria-label="Close">×</button></div>
+    <div class="modal-body">
+      <label class="fld"><span class="lbl">Layer</span><select id="exLayer"></select></label>
+      <div class="fld"><span class="lbl">File format</span>
+        <div class="seg" id="exFmt">
+          <label><input type="radio" name="fmt" value="shp" checked><span><b>Shapefile</b><i>.zip with .shp .shx .dbf .prj</i></span></label>
+          <label><input type="radio" name="fmt" value="kmz"><span><b>KMZ</b><i>Zipped KML, for Google Earth</i></span></label>
+          <label><input type="radio" name="fmt" value="kml"><span><b>KML</b><i>Plain XML, for Google Earth</i></span></label>
+          <label><input type="radio" name="fmt" value="geojson"><span><b>GeoJSON</b><i>For QGIS, web maps, code</i></span></label>
+        </div>
+      </div>
+      <div class="fld"><span class="lbl">Area to download</span>
+        <div class="seg three" id="exArea">
+          <label><input type="radio" name="area" value="view" checked><span><b>Current map view</b><i>Everything inside the map window right now</i></span></label>
+          <label><input type="radio" name="area" value="box" id="areaBox" disabled><span><b>Drawn box</b><i id="areaBoxNote">Use “Draw box” on the ribbon first</i></span></label>
+          <label><input type="radio" name="area" value="all"><span><b>Entire layer</b><i>Every feature (tick “Download every matching feature” below to remove the size limit)</i></span></label>
+        </div>
+      </div>
+      <label class="chk"><input type="checkbox" id="exUseWhere" checked><span id="exWhereLbl">Apply the layer’s definition query</span></label>
+      <label class="chk"><input type="checkbox" id="exNoCap"><span>Download every matching feature, no matter how many (ignore the limit below)</span></label>
+      <div class="row2">
+        <label class="fld"><span class="lbl">Maximum features</span><input type="number" id="exCap" min="1" max="5000000" value="20000"></label>
+        <label class="fld"><span class="lbl">File name</span><input type="text" id="exName"></label>
+      </div>
+      <label class="fld" id="exNameFieldWrap"><span class="lbl">Placemark name (KML / KMZ)</span><select id="exNameField"></select></label>
+      <div class="ex-status" id="exStatus" role="status"></div>
+      <div class="bar" id="exBarWrap" hidden><div id="exBar"></div></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="exCount">Count features</button>
+      <span class="sp"></span>
+      <button class="btn" id="exCancel">Close</button>
+      <button class="btn primary" id="exGo">Download</button>
+    </div>
+  </div>
+</div>
+
+<!-- Field list dialog -->
+<div class="overlay" id="infoModal" hidden>
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="infoTitle">
+    <div class="modal-head"><h2 id="infoTitle">Layer details</h2><button class="x" data-close aria-label="Close">×</button></div>
+    <div class="modal-body" id="infoBody"></div>
+  </div>
+</div>
+
+<!-- Help dialog -->
+<div class="overlay" id="helpModal" hidden>
+  <div class="modal help" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+    <div class="modal-head"><h2 id="helpTitle">How to use</h2><button class="x" data-close aria-label="Close">×</button></div>
+    <div class="modal-body">
+      <ol>
+        <li>Paste the layer address (it ends in <code>/FeatureServer/0</code> or <code>/MapServer/3</code>) and press <b>Add to map</b>. A service address without a number adds all of its layers.</li>
+        <li>Big layers such as county parcels only draw once you zoom in (the minimum zoom is shown on the layer card). Zoom in, then click any shape to see its attributes.</li>
+        <li>Use <b>Definition query</b> on the layer card to filter, for example <code>municipality = 'OAK PARK'</code>. The <b>Attribute table</b> lists what is loaded in the current view.</li>
+        <li>Press <b>Shapefile</b>, <b>KML</b>, <b>KMZ</b> or <b>GeoJSON</b>. Choose the map view, a box you drew, or the entire layer, then press <b>Download</b>. Tick “Download every matching feature” to remove the size limit entirely and fetch everything that matches, however many features that is — for a county-wide parcel layer this can be a large file and take a while, since ArcGIS servers only return a few thousand features per request.</li>
+        <li>Shapefiles come as a .zip. Unzip it before opening in ArcGIS or QGIS. Shapefile field names are cut to 10 characters, so a <code>_field_names.txt</code> file lists the original names.</li>
+        <li>Some servers (for example <code>gis.cookcountyil.gov/traditional/…</code>) refuse browser requests because they send no CORS header, even though the address opens fine in a tab. Leave <b>Connection</b> on <b>Auto</b> and the layer is retried through a public proxy; a notice appears when that happens. Public proxies are rate limited, so for a big download use your own proxy address in the box next to it, with <code>{url}</code> where the target address goes.</li>
+      </ol>
+      <p class="hint">Everything runs in your browser. Nothing is uploaded anywhere except the requests sent to the ArcGIS server you entered.</p>
+    </div>
+  </div>
+</div>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+<!-- ============================ EXPORT CORE (no DOM) ============================ -->
+<script id="core">
+const GGCore = (function () {
+  'use strict';
+  const enc = new TextEncoder();
+  const PRJ = 'GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]]';
+  const pad2 = n => String(n).padStart(2, '0');
+
+  function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+  function xmlText(s) { return String(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function xmlAttr(s) { return xmlText(s).replace(/"/g, '&quot;'); }
+  function sanitizeName(s) { return String(s || '').replace(/[^\w\-. ]+/g, '_').replace(/\s+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80) || 'export'; }
+  function toDate(v) { return new Date(typeof v === 'number' ? v : (/^-?\d+$/.test(String(v)) ? Number(v) : Date.parse(v))); }
+  function fmtDate(v) {
+    const d = toDate(v); if (isNaN(d)) return String(v);
+    return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate()) + ' ' + pad2(d.getUTCHours()) + ':' + pad2(d.getUTCMinutes()) + ':' + pad2(d.getUTCSeconds());
+  }
+  function strVal(v) { return (typeof v === 'object' ? JSON.stringify(v) : String(v)).replace(/[\u0000-\u001F]/g, ' '); }
+
+  /* ---------- geometry helpers ---------- */
+  function closeRing(r) {
+    if (!r.length) return r;
+    const a = r[0], b = r[r.length - 1];
+    if (a[0] !== b[0] || a[1] !== b[1]) { r = r.slice(); r.push([a[0], a[1]]); }
+    return r;
+  }
+  function ringIsClockwise(ring) {
+    let s = 0;
+    for (let i = 0; i < ring.length - 1; i++) s += (ring[i + 1][0] - ring[i][0]) * (ring[i + 1][1] + ring[i][1]);
+    return s > 0;
+  }
+  function esriToGeoJSONGeom(g) {
+    if (!g) return null;
+    if (g.x !== undefined && g.y !== undefined) {
+      const x = Number(g.x), y = Number(g.y);
+      return (isFinite(x) && isFinite(y)) ? { type: 'Point', coordinates: [x, y] } : null;
+    }
+    if (g.points) return g.points.length ? { type: 'MultiPoint', coordinates: g.points.map(p => [p[0], p[1]]) } : null;
+    if (g.paths) {
+      const p = g.paths.filter(a => a.length > 1).map(a => a.map(c => [c[0], c[1]]));
+      if (!p.length) return null;
+      return p.length === 1 ? { type: 'LineString', coordinates: p[0] } : { type: 'MultiLineString', coordinates: p };
+    }
+    if (g.rings) {
+      const polys = [];
+      g.rings.forEach(r => {
+        const ring = closeRing(r.map(c => [c[0], c[1]]));
+        if (ring.length < 4) return;
+        if (ringIsClockwise(ring) || !polys.length) polys.push([ring]); else polys[polys.length - 1].push(ring);
+      });
+      if (!polys.length) return null;
+      return polys.length === 1 ? { type: 'Polygon', coordinates: polys[0] } : { type: 'MultiPolygon', coordinates: polys };
+    }
+    return null;
+  }
+  function esriFeaturesToGeoJSON(list, oid) {
+    return (list || []).map(f => {
+      const a = f.attributes || {};
+      return { type: 'Feature', id: oid ? a[oid] : undefined, properties: a, geometry: esriToGeoJSONGeom(f.geometry) };
+    });
+  }
+
+  /* ---------- fields ---------- */
+  function fieldKind(t) {
+    switch (t) {
+      case 'esriFieldTypeOID': case 'esriFieldTypeSmallInteger': case 'esriFieldTypeInteger': case 'esriFieldTypeBigInteger': return 'int';
+      case 'esriFieldTypeDouble': case 'esriFieldTypeSingle': return 'double';
+      case 'esriFieldTypeDate': case 'esriFieldTypeDateOnly': return 'date';
+      default: return 'str';
+    }
+  }
+  function resolveFields(features, fields) {
+    const out = [], seen = new Set();
+    (fields || []).forEach(f => {
+      if (/Geometry|Blob|Raster|XML/.test(f.type || '') || seen.has(f.name)) return;
+      seen.add(f.name);
+      out.push({ name: f.name, alias: f.alias || f.name, type: f.type, kind: fieldKind(f.type) });
+    });
+    const lim = Math.min(features.length, 200);
+    for (let i = 0; i < lim; i++) {
+      const p = features[i].properties || {};
+      for (const k in p) {
+        if (seen.has(k)) continue;
+        seen.add(k);
+        const v = p[k];
+        out.push({ name: k, alias: k, type: '', kind: typeof v === 'number' ? (Number.isInteger(v) ? 'int' : 'double') : 'str' });
+      }
+    }
+    return out;
+  }
+
+  /* ---------- SHAPEFILE ---------- */
+  const KINDS = { polygon: 5, line: 3, point: 1, multipoint: 8 };
+  function kindFromEsri(t) {
+    return ({ esriGeometryPolygon: 'polygon', esriGeometryPolyline: 'line', esriGeometryPoint: 'point', esriGeometryMultipoint: 'multipoint' })[t] || null;
+  }
+  function kindFromGeoJSON(features) {
+    for (const f of features) {
+      const g = f.geometry; if (!g) continue;
+      if (g.type === 'Polygon' || g.type === 'MultiPolygon') return 'polygon';
+      if (g.type === 'LineString' || g.type === 'MultiLineString') return 'line';
+      if (g.type === 'Point') return 'point';
+      if (g.type === 'MultiPoint') return 'multipoint';
+    }
+    return null;
+  }
+  function orientRing(ring, wantCW) {
+    ring = closeRing(ring);
+    return ringIsClockwise(ring) === wantCW ? ring : ring.slice().reverse();
+  }
+  function extractShape(g, kind) {
+    if (!g) return null;
+    if (kind === 'polygon') {
+      const polys = g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : null;
+      if (!polys) return null;
+      const parts = [];
+      polys.forEach(p => p.forEach((ring, i) => {
+        if (!ring || ring.length < 3) return;
+        const r = orientRing(ring, i === 0);   // outer = clockwise, holes = counter-clockwise
+        if (r.length >= 4) parts.push(r);
+      }));
+      return parts.length ? { parts } : null;
+    }
+    if (kind === 'line') {
+      const ls = g.type === 'LineString' ? [g.coordinates] : g.type === 'MultiLineString' ? g.coordinates : null;
+      if (!ls) return null;
+      const parts = ls.filter(l => l && l.length > 1);
+      return parts.length ? { parts } : null;
+    }
+    if (kind === 'point') {
+      const c = g.type === 'Point' ? g.coordinates : (g.type === 'MultiPoint' && g.coordinates.length ? g.coordinates[0] : null);
+      return c ? { pts: [c] } : null;
+    }
+    const pts = g.type === 'MultiPoint' ? g.coordinates : g.type === 'Point' ? [g.coordinates] : null;
+    return pts && pts.length ? { pts } : null;
+  }
+  function shapeBox(s) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    const add = c => { if (c[0] < x0) x0 = c[0]; if (c[0] > x1) x1 = c[0]; if (c[1] < y0) y0 = c[1]; if (c[1] > y1) y1 = c[1]; };
+    if (s.pts) s.pts.forEach(add); else s.parts.forEach(p => p.forEach(add));
+    return [x0, y0, x1, y1];
+  }
+  function writeHeader(dv, bytes, type, bbox) {
+    dv.setInt32(0, 9994, false);
+    dv.setInt32(24, bytes / 2, false);
+    dv.setInt32(28, 1000, true);
+    dv.setInt32(32, type, true);
+    for (let i = 0; i < 4; i++) dv.setFloat64(36 + 8 * i, bbox[i], true);
+  }
+  function buildShpShx(features, kind) {
+    const type = KINDS[kind];
+    const shapes = features.map(f => extractShape(f.geometry, kind));
+    const sizes = shapes.map(s => {
+      if (!s) return 4;
+      if (kind === 'point') return 20;
+      if (kind === 'multipoint') return 40 + 16 * s.pts.length;
+      const np = s.parts.reduce((a, p) => a + p.length, 0);
+      return 44 + 4 * s.parts.length + 16 * np;
+    });
+    let total = 100; sizes.forEach(z => total += 8 + z);
+    const shp = new ArrayBuffer(total), dv = new DataView(shp);
+    const shx = new ArrayBuffer(100 + 8 * features.length), dx = new DataView(shx);
+    let bb = [Infinity, Infinity, -Infinity, -Infinity];
+    let off = 100;
+    shapes.forEach((s, i) => {
+      const size = sizes[i];
+      dx.setInt32(100 + 8 * i, off / 2, false); dx.setInt32(104 + 8 * i, size / 2, false);
+      dv.setInt32(off, i + 1, false); dv.setInt32(off + 4, size / 2, false);
+      const p = off + 8;
+      if (!s) { dv.setInt32(p, 0, true); }
+      else {
+        const b = shapeBox(s);
+        bb = [Math.min(bb[0], b[0]), Math.min(bb[1], b[1]), Math.max(bb[2], b[2]), Math.max(bb[3], b[3])];
+        if (kind === 'point') {
+          dv.setInt32(p, 1, true); dv.setFloat64(p + 4, s.pts[0][0], true); dv.setFloat64(p + 12, s.pts[0][1], true);
+        } else if (kind === 'multipoint') {
+          dv.setInt32(p, 8, true);
+          for (let k = 0; k < 4; k++) dv.setFloat64(p + 4 + 8 * k, b[k], true);
+          dv.setInt32(p + 36, s.pts.length, true);
+          s.pts.forEach((c, k) => { dv.setFloat64(p + 40 + 16 * k, c[0], true); dv.setFloat64(p + 48 + 16 * k, c[1], true); });
+        } else {
+          dv.setInt32(p, type, true);
+          for (let k = 0; k < 4; k++) dv.setFloat64(p + 4 + 8 * k, b[k], true);
+          const np = s.parts.reduce((a, q) => a + q.length, 0);
+          dv.setInt32(p + 36, s.parts.length, true);
+          dv.setInt32(p + 40, np, true);
+          let idx = 0, q = p + 44, pq = q + 4 * s.parts.length;
+          s.parts.forEach((part, k) => {
+            dv.setInt32(q + 4 * k, idx, true);
+            part.forEach(c => { dv.setFloat64(pq, c[0], true); dv.setFloat64(pq + 8, c[1], true); pq += 16; });
+            idx += part.length;
+          });
+        }
+      }
+      off += 8 + size;
+    });
+    if (!isFinite(bb[0])) bb = [0, 0, 0, 0];
+    writeHeader(dv, total, type, bb);
+    writeHeader(dx, 100 + 8 * features.length, type, bb);
+    return { shp, shx };
+  }
+
+  function uniqueDbfNames(names) {
+    const used = new Set(), out = [];
+    names.forEach(n => {
+      const base = String(n).replace(/[^A-Za-z0-9_]/g, '_').slice(0, 10) || 'FIELD';
+      let nm = base, i = 0;
+      while (used.has(nm.toUpperCase())) { i++; const suf = '_' + i; nm = base.slice(0, 10 - suf.length) + suf; }
+      used.add(nm.toUpperCase()); out.push(nm);
+    });
+    return out;
+  }
+  function fixedNum(x, dec, len) {
+    if (Math.abs(x) >= 1e21) return null;
+    for (let d = dec; d >= 0; d--) { const s = x.toFixed(d); if (s.length <= len) return s; }
+    return null;
+  }
+  function buildDbf(features, fields) {
+    const names = uniqueDbfNames(fields.map(f => f.name));
+    const specs = fields.map((f, i) => ({ src: f.name, name: names[i], kind: f.kind, maxBytes: 1, maxInt: 1 }));
+    features.forEach(ft => {
+      const p = ft.properties || {};
+      specs.forEach(sp => {
+        const v = p[sp.src]; if (v === null || v === undefined || v === '') return;
+        if (sp.kind === 'str') { const n = enc.encode(strVal(v)).length; if (n > sp.maxBytes) sp.maxBytes = n; }
+        else if (sp.kind === 'int' || sp.kind === 'double') {
+          const x = Number(v); if (!isFinite(x)) return;
+          if (sp.kind === 'int' && !Number.isInteger(x)) sp.kind = 'double';
+          const a = Math.abs(x), d = a < 1 ? 1 : Math.floor(Math.log10(a)) + 1;
+          if (d > sp.maxInt) sp.maxInt = d;
+        }
+      });
+    });
+    specs.forEach(sp => {
+      if (sp.kind === 'str') { sp.t = 'C'; sp.len = Math.min(254, Math.max(1, sp.maxBytes)); sp.dec = 0; }
+      else if (sp.kind === 'int') { sp.t = 'N'; sp.len = Math.min(18, Math.max(9, sp.maxInt + 1)); sp.dec = 0; }
+      else if (sp.kind === 'double') { sp.t = 'N'; sp.len = 19; sp.dec = Math.max(0, Math.min(10, 17 - sp.maxInt)); }
+      else { sp.t = 'D'; sp.len = 8; sp.dec = 0; }
+    });
+    const layout = () => { let r = 1; specs.forEach(sp => { sp.off = r; r += sp.len; }); return r; };
+    let recLen = layout();
+    while (recLen > 65000) {
+      const w = specs.filter(s => s.t === 'C' && s.len > 1).sort((a, b) => b.len - a.len)[0];
+      if (!w) break;
+      w.len = Math.max(1, Math.floor(w.len / 2)); recLen = layout();
+    }
+    const nf = specs.length, n = features.length, hdr = 32 + 32 * nf + 1;
+    const total = hdr + n * recLen + 1;
+    const buf = new Uint8Array(total), dv = new DataView(buf.buffer);
+    const now = new Date();
+    buf[0] = 3; buf[1] = now.getFullYear() - 1900; buf[2] = now.getMonth() + 1; buf[3] = now.getDate();
+    dv.setUint32(4, n, true); dv.setUint16(8, hdr, true); dv.setUint16(10, recLen, true);
+    specs.forEach((sp, i) => {
+      const b = 32 + 32 * i;
+      for (let k = 0; k < sp.name.length && k < 10; k++) buf[b + k] = sp.name.charCodeAt(k);
+      buf[b + 11] = sp.t.charCodeAt(0); buf[b + 16] = sp.len; buf[b + 17] = sp.dec;
+    });
+    buf[32 + 32 * nf] = 0x0D;
+    buf.fill(0x20, hdr, hdr + n * recLen);
+    for (let r = 0; r < n; r++) {
+      const p = features[r].properties || {}, base = hdr + r * recLen;
+      for (let k = 0; k < nf; k++) {
+        const sp = specs[k], v = p[sp.src];
+        if (v === null || v === undefined || v === '') continue;
+        const at = base + sp.off;
+        if (sp.t === 'C') {
+          const b = enc.encode(strVal(v)); let len = b.length;
+          if (len > sp.len) { len = sp.len; while (len > 0 && (b[len] & 0xC0) === 0x80) len--; }
+          buf.set(b.subarray(0, len), at);
+        } else if (sp.t === 'N') {
+          const x = Number(v); if (!isFinite(x)) continue;
+          const s = fixedNum(x, sp.dec, sp.len); if (s === null) continue;
+          for (let q = 0; q < s.length; q++) buf[at + sp.len - s.length + q] = s.charCodeAt(q);
+        } else {
+          const d = toDate(v); if (isNaN(d)) continue;
+          const s = String(d.getUTCFullYear()).padStart(4, '0') + pad2(d.getUTCMonth() + 1) + pad2(d.getUTCDate());
+          for (let q = 0; q < 8; q++) buf[at + q] = s.charCodeAt(q);
+        }
+      }
+    }
+    buf[total - 1] = 0x1A;
+    return { buf, specs };
+  }
+  function buildShapefile(features, opts) {
+    const name = opts.name || 'layer';
+    const kind = kindFromEsri(opts.geometryType) || kindFromGeoJSON(features) || 'point';
+    const fields = resolveFields(features, opts.fields);
+    const { shp, shx } = buildShpShx(features, kind);
+    const { buf, specs } = buildDbf(features, fields);
+    const map = fields.map((f, i) => specs[i].name.padEnd(12) + ' <- ' + f.name + (f.alias && f.alias !== f.name ? '  (' + f.alias + ')' : ''));
+    const files = {};
+    files[name + '.shp'] = shp; files[name + '.shx'] = shx;
+    files[name + '.dbf'] = buf.buffer; files[name + '.prj'] = PRJ; files[name + '.cpg'] = 'UTF-8';
+    files[name + '_field_names.txt'] = 'Shapefile field names are limited to 10 characters.\r\nShapefile name <- original field name (alias)\r\n\r\n' + map.join('\r\n') + '\r\n';
+    return files;
+  }
+
+  /* ---------- KML ---------- */
+  const r7 = v => Math.round(v * 1e7) / 1e7;
+  const kmlCoords = a => a.map(c => r7(c[0]) + ',' + r7(c[1]) + ',0').join(' ');
+  function kmlColor(hex, alpha) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || ''); const h = m ? m[1] : '0f766e';
+    const a = Math.round(Math.max(0, Math.min(1, alpha)) * 255).toString(16).padStart(2, '0');
+    return a + h.slice(4, 6) + h.slice(2, 4) + h.slice(0, 2);
+  }
+  function kmlPoly(rings) {
+    let s = '<Polygon><outerBoundaryIs><LinearRing><coordinates>' + kmlCoords(closeRing(rings[0])) + '</coordinates></LinearRing></outerBoundaryIs>';
+    for (let i = 1; i < rings.length; i++) s += '<innerBoundaryIs><LinearRing><coordinates>' + kmlCoords(closeRing(rings[i])) + '</coordinates></LinearRing></innerBoundaryIs>';
+    return s + '</Polygon>';
+  }
+  function kmlGeom(g) {
+    if (!g) return '';
+    switch (g.type) {
+      case 'Point': return '<Point><coordinates>' + kmlCoords([g.coordinates]) + '</coordinates></Point>';
+      case 'MultiPoint': return g.coordinates.length ? '<MultiGeometry>' + g.coordinates.map(c => '<Point><coordinates>' + kmlCoords([c]) + '</coordinates></Point>').join('') + '</MultiGeometry>' : '';
+      case 'LineString': return '<LineString><tessellate>1</tessellate><coordinates>' + kmlCoords(g.coordinates) + '</coordinates></LineString>';
+      case 'MultiLineString': return '<MultiGeometry>' + g.coordinates.map(l => '<LineString><tessellate>1</tessellate><coordinates>' + kmlCoords(l) + '</coordinates></LineString>').join('') + '</MultiGeometry>';
+      case 'Polygon': return kmlPoly(g.coordinates);
+      case 'MultiPolygon': return '<MultiGeometry>' + g.coordinates.map(kmlPoly).join('') + '</MultiGeometry>';
+      case 'GeometryCollection': return '<MultiGeometry>' + g.geometries.map(kmlGeom).join('') + '</MultiGeometry>';
+      default: return '';
+    }
+  }
+  function buildKml(features, opts) {
+    const fields = resolveFields(features, opts.fields);
+    const line = kmlColor(opts.lineColor, 1), fill = kmlColor(opts.fillColor, opts.fillOpacity == null ? 0.35 : Math.max(0.1, opts.fillOpacity));
+    const out = [];
+    out.push('<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n<name>' + xmlText(opts.name || 'Layer') + '</name>\n' +
+      '<Style id="s"><IconStyle><color>' + line + '</color><scale>0.7</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon></IconStyle>' +
+      '<LineStyle><color>' + line + '</color><width>1.5</width></LineStyle><PolyStyle><color>' + fill + '</color><fill>1</fill><outline>1</outline></PolyStyle></Style>\n');
+    let chunk = [];
+    features.forEach((f, i) => {
+      const p = f.properties || {};
+      let nm = opts.nameField ? p[opts.nameField] : null;
+      if (nm === null || nm === undefined || nm === '') nm = 'Feature ' + (i + 1);
+      let s = '<Placemark><name>' + xmlText(nm) + '</name><styleUrl>#s</styleUrl><ExtendedData>';
+      fields.forEach(fd => {
+        const v = p[fd.name]; if (v === null || v === undefined || v === '') return;
+        s += '<Data name="' + xmlAttr(fd.name) + '"><value>' + xmlText(fd.kind === 'date' ? fmtDate(v) : strVal(v)) + '</value></Data>';
+      });
+      s += '</ExtendedData>' + kmlGeom(f.geometry) + '</Placemark>\n';
+      chunk.push(s);
+      if (chunk.length >= 500) { out.push(chunk.join('')); chunk = []; }
+    });
+    if (chunk.length) out.push(chunk.join(''));
+    out.push('</Document>\n</kml>\n');
+    return out;
+  }
+  function buildGeoJSONParts(features) {
+    const out = ['{"type":"FeatureCollection","features":[\n'];
+    for (let i = 0; i < features.length; i += 500) out.push((i ? ',\n' : '') + features.slice(i, i + 500).map(f => JSON.stringify(f)).join(',\n'));
+    out.push('\n]}');
+    return out;
+  }
+
+  return { esc, fmtDate, sanitizeName, fieldKind, resolveFields, esriFeaturesToGeoJSON, esriToGeoJSONGeom, kindFromEsri, kindFromGeoJSON, buildShapefile, buildKml, buildGeoJSONParts, ringIsClockwise, closeRing };
+})();
+</script>
+
+<!-- ================================= APP ================================= -->
+<script id="app-js">
+(function () {
+  'use strict';
+  const $ = (s, r) => (r || document).querySelector(s);
+  const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+  const esc = GGCore.esc;
+
+  if (typeof L === 'undefined') {
+    document.body.innerHTML = '<div style="padding:40px;font:16px/1.5 sans-serif;max-width:640px"><h2>The map library could not be loaded</h2><p>This page needs an internet connection to load Leaflet and JSZip from cdnjs.cloudflare.com. Connect to the internet (or allow that domain) and reload the page.</p></div>';
+    return;
+  }
+
+  const NETMSG = 'Cannot reach the server. Check your internet connection. If the address is correct, the server may block requests from a local file – open this page through a local web server instead (see the guide).';
+  const PALETTE = ['#0f766e', '#c2410c', '#6d28d9', '#1d4ed8', '#be185d', '#15803d', '#a16207'];
+  const NETMSG_PROXY = 'Cannot reach the server, directly or through any of the built-in proxies. Try “Always use proxy”, or enter your own proxy address (see Help). Details: ';
+  const state = { token: '', proxyMode: 'auto', proxyTpl: '' };
+  /* Public CORS proxies, tried in order. They are GET-only and rate limited,
+     so they are a fallback for servers that send no Access-Control-Allow-Origin.
+     corsproxy.io's free tier only serves localhost/CodePen origins and
+     allorigins.win is frequently down, so both are kept last as a last resort. */
+  const PROXIES = [
+    { name: 'codetabs', tpl: 'https://api.codetabs.com/v1/proxy?quest={url}' },
+    { name: 'thingproxy', tpl: 'https://thingproxy.freeboard.io/fetch/{url}', raw: true },
+    { name: 'allorigins', tpl: 'https://api.allorigins.win/raw?url={url}' },
+    { name: 'corsproxy.io', tpl: 'https://corsproxy.io/?url={url}' }
+  ];
+  const proxyHosts = new Set();   // hosts already proven to need the proxy
+  const proxyToasted = new Set(); // so the notice shows only once per host
+  function hostOf(u) { try { return new URL(u, location.href).host; } catch (e) { return u; } }
+  function proxyList() {
+    const t = (state.proxyTpl || '').trim();
+    if (t) return [{ name: 'your proxy', tpl: t.indexOf('{url}') >= 0 ? t : t + '{url}' }];
+    return PROXIES;
+  }
+  function proxyUrl(px, full) { return px.tpl.replace('{url}', px.raw ? full : encodeURIComponent(full)); }
+  const layers = [];
+  let seq = 0, activeId = null, drawMode = false, boxStart = null, boxLayer = null, busyCount = 0;
+  let exportAbort = null, exportRunning = false;
+
+  /* ---------- small UI helpers ---------- */
+  const ICONS = {
+    target: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>',
+    table: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M3 10h18M3 15h18M9 4v16"/></svg>',
+    box: '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" stroke-dasharray="3 2.5"/></svg>',
+    clear: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    down: '<svg viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>',
+    layers: '<svg viewBox="0 0 24 24"><path d="M12 3 3 8l9 5 9-5-9-5ZM3 13l9 5 9-5M3 17.5l9 5 9-5"/></svg>'
+  };
+  $$('[data-icon]').forEach(b => { b.insertAdjacentHTML('afterbegin', ICONS[b.dataset.icon] || ''); });
+
+  let toastTimer;
+  function toast(msg, kind) {
+    const t = $('#toast'); t.textContent = msg; t.className = 'show ' + (kind || '');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.className = ''; }, kind === 'err' ? 9000 : 4500);
+  }
+  function busy(d) { busyCount = Math.max(0, busyCount + d); $('#busy').classList.toggle('on', busyCount > 0); }
+  function setMsg(m) { $('#stMsg').textContent = m; }
+  const nf = n => Number(n).toLocaleString('en-US');
+  const byId = id => layers.find(l => l.id === Number(id));
+  const activeLayer = () => byId(activeId) || layers[0] || null;
+
+  /* ---------- ArcGIS REST ---------- */
+  async function arcRequest(url, params, signal) {
+    const p = new URLSearchParams();
+    Object.keys(params || {}).forEach(k => { const v = params[k]; if (v !== undefined && v !== null) p.set(k, String(v)); });
+    if (!p.has('f')) p.set('f', 'json');
+    if (state.token) p.set('token', state.token);
+    const qs = p.toString();
+    const full = url + (url.indexOf('?') >= 0 ? '&' : '?') + qs;
+    const host = hostOf(url);
+    const viaProxyFirst = state.proxyMode === 'always' || (state.proxyMode === 'auto' && proxyHosts.has(host));
+    const attempts = [];
+    let res = null;
+    if (!viaProxyFirst) {
+      try { res = await fetch(url, { method: 'POST', body: p, signal }); if (!res.ok) attempts.push('direct POST: HTTP ' + res.status); }
+      catch (e) { if (e && e.name === 'AbortError') throw e; attempts.push('direct POST: ' + (e.message || 'blocked')); }
+      if (!res || !res.ok) {
+        try {
+          const r2 = await fetch(full, { signal });
+          if (!r2.ok) attempts.push('direct GET: HTTP ' + r2.status);
+          if (!res || r2.ok) res = r2;
+        } catch (e) { if (e && e.name === 'AbortError') throw e; attempts.push('direct GET: ' + (e.message || 'blocked')); res = null; }
+      }
+    }
+    /* Direct request never reached the server (CORS block, DNS, offline) – try the proxies. */
+    if ((!res || !res.ok) && state.proxyMode !== 'off') {
+      res = null;
+      for (const px of proxyList()) {
+        try {
+          const r3 = await fetch(proxyUrl(px, full), { signal });
+          if (r3.ok) {
+            res = r3;
+            if (!proxyHosts.has(host)) {
+              proxyHosts.add(host);
+              if (!proxyToasted.has(host)) { proxyToasted.add(host); toast(host + ' blocks direct browser requests – using ' + px.name + ' instead.', 'warn'); }
+            }
+            break;
+          }
+          attempts.push(px.name + ': HTTP ' + r3.status);
+        } catch (e) { if (e && e.name === 'AbortError') throw e; attempts.push(px.name + ': ' + (e.message || 'blocked')); }
+      }
+    }
+    if (!res) throw new Error(state.proxyMode === 'off' ? NETMSG : NETMSG_PROXY + attempts.join(' · '));
+    const txt = await res.text(); let j;
+    try { j = JSON.parse(txt); }
+    catch (e) { throw new Error(res.ok ? 'The server did not answer with JSON. Check that this is an ArcGIS REST layer address.' : 'The server answered with HTTP ' + res.status + '.'); }
+    if (j && j.error) {
+      const d = (j.error.details && j.error.details.length) ? ' (' + j.error.details.join('; ') + ')' : '';
+      const err = new Error((j.error.message || 'Server error') + d); err.code = j.error.code; throw err;
+    }
+    return j;
+  }
+  function fromEsri(j, lyr) {
+    return { features: GGCore.esriFeaturesToGeoJSON(j.features, lyr.oid), exceeded: !!j.exceededTransferLimit };
+  }
+  async function queryFeatures(lyr, params, signal) {
+    const url = lyr.url + '/query';
+    if (lyr.fmt === 'geojson') {
+      try {
+        const j = await arcRequest(url, Object.assign({}, params, { f: 'geojson' }), signal);
+        if (!Array.isArray(j.features)) throw new Error('Unexpected GeoJSON response');
+        return { features: j.features, exceeded: !!(j.exceededTransferLimit || (j.properties && j.properties.exceededTransferLimit)) };
+      } catch (e) {
+        if (e && e.name === 'AbortError') throw e;
+        const j2 = await arcRequest(url, Object.assign({}, params, { f: 'json' }), signal);
+        lyr.fmt = 'json';
+        return fromEsri(j2, lyr);
+      }
+    }
+    const j = await arcRequest(url, Object.assign({}, params, { f: 'json' }), signal);
+    return fromEsri(j, lyr);
+  }
+  function normalizeUrl(u) {
+    return u.split('#')[0].split('?')[0].trim().replace(/\/+$/, '').replace(/\/query$/i, '');
+  }
+
+  /* ---------- map ---------- */
+  const map = L.map('map', { preferCanvas: true, center: [41.84, -87.68], zoom: 10, maxZoom: 21, zoomControl: true });
+  L.control.scale({ imperial: true, metric: true, position: 'bottomleft' }).addTo(map);
+  const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/';
+  const esriAttr = 'Tiles © Esri, Maxar, Earthstar Geographics, and the GIS User Community';
+  const esriTile = (svc, nz) => L.tileLayer(ESRI + svc + '/MapServer/tile/{z}/{y}/{x}', { maxNativeZoom: nz || 19, maxZoom: 21, attribution: esriAttr });
+  const BASEMAPS = {
+    'Esri Streets': () => esriTile('World_Street_Map'),
+    'Esri Imagery': () => esriTile('World_Imagery'),
+    'Imagery with labels': () => L.layerGroup([esriTile('World_Imagery'), esriTile('Reference/World_Boundaries_and_Places')]),
+    'Esri Topographic': () => esriTile('World_Topo_Map'),
+    'Light gray canvas': () => esriTile('Canvas/World_Light_Gray_Base', 16),
+    'Dark gray canvas': () => esriTile('Canvas/World_Dark_Gray_Base', 16),
+    'OpenStreetMap': () => L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxNativeZoom: 19, maxZoom: 21, attribution: '© OpenStreetMap contributors' })
+  };
+  let baseLayer = null;
+  const bsel = $('#basemapSel');
+  Object.keys(BASEMAPS).forEach(k => bsel.insertAdjacentHTML('beforeend', '<option>' + esc(k) + '</option>'));
+  function setBasemap(name) {
+    if (baseLayer) map.removeLayer(baseLayer);
+    baseLayer = BASEMAPS[name](); baseLayer.addTo(map);
+    if (baseLayer.bringToBack) baseLayer.bringToBack();
+  }
+  bsel.addEventListener('change', () => setBasemap(bsel.value));
+  setBasemap('Esri Streets');
+
+  const hi = L.geoJSON(null, {
+    style: { color: '#f5b301', weight: 4, fillColor: '#f5b301', fillOpacity: 0.25, opacity: 1, interactive: false },
+    pointToLayer: (f, ll) => L.circleMarker(ll, { radius: 9, color: '#f5b301', weight: 3, fillOpacity: 0.3, interactive: false })
+  }).addTo(map);
+
+  map.on('mousemove', e => {
+    $('#stCoord').textContent = 'Lat/Lon: ' + e.latlng.lat.toFixed(5) + ', ' + e.latlng.lng.toFixed(5);
+    if (drawMode && boxStart && boxLayer) boxLayer.setBounds(L.latLngBounds(boxStart, e.latlng));
+  });
+  function updateScale() {
+    const z = map.getZoom(), lat = map.getCenter().lat;
+    const mpp = 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, z);
+    $('#stZoom').textContent = 'Zoom: ' + z;
+    $('#stScale').textContent = 'Scale: 1:' + nf(Math.round(mpp * 3779.5275));
+  }
+  map.on('zoomend moveend', updateScale); updateScale();
+
+  /* ---------- draw box ---------- */
+  function setDrawMode(on) {
+    drawMode = on;
+    $('#btnDraw').classList.toggle('on', on);
+    $('#map').classList.toggle('drawing', on);
+    map.getContainer().style.cursor = on ? 'crosshair' : '';
+    if (on) map.dragging.disable(); else map.dragging.enable();
+    if (on) setMsg('Draw box: press and drag on the map to mark the area you want to download.');
+  }
+  $('#btnDraw').addEventListener('click', () => setDrawMode(!drawMode));
+  $('#btnClearBox').addEventListener('click', () => { clearBox(); setDrawMode(false); });
+  function clearBox() { if (boxLayer) { map.removeLayer(boxLayer); boxLayer = null; } boxStart = null; }
+  map.on('mousedown', e => {
+    if (!drawMode) return;
+    clearBox(); boxStart = e.latlng;
+    boxLayer = L.rectangle([boxStart, boxStart], { color: '#c2410c', weight: 2, dashArray: '6 4', fillOpacity: 0.08, interactive: false }).addTo(map);
+  });
+  map.on('mouseup', e => {
+    if (!drawMode || !boxStart) return;
+    const b = boxLayer.getBounds(); boxStart = null; setDrawMode(false);
+    if (b.getNorth() === b.getSouth() || b.getEast() === b.getWest()) { clearBox(); return; }
+    setMsg('Box drawn. Choose a download format and select “Drawn box”.');
+    toast('Box drawn. Press Shapefile, KML or KMZ and choose “Drawn box”.');
+  });
+
+  /* ---------- layers ---------- */
+  function styleFromMeta(meta, idx) {
+    const c = PALETTE[idx % PALETTE.length];
+    const def = { line: c, fill: c, fillOp: 0.3, weight: 1.5 };
+    try {
+      const r = meta.drawingInfo && meta.drawingInfo.renderer;
+      const sym = r && (r.symbol || r.defaultSymbol);
+      if (!sym) return def;
+      const hex = a => '#' + [0, 1, 2].map(i => (a[i] | 0).toString(16).padStart(2, '0')).join('');
+      if (sym.type === 'esriSFS') {
+        const o = sym.outline || {};
+        if (sym.color) { def.fill = hex(sym.color); def.fillOp = (sym.color[3] == null ? 255 : sym.color[3]) / 255; } else def.fillOp = 0;
+        if (o.color) { def.line = hex(o.color); def.weight = Math.max(0.5, Math.min(4, o.width || 1)); } else def.line = def.fill;
+      } else if (sym.type === 'esriSLS') {
+        if (sym.color) def.line = hex(sym.color); def.weight = Math.max(1, Math.min(5, sym.width || 1.5));
+      } else if ((sym.type === 'esriSMS' || sym.type === 'esriPMS') && sym.color) {
+        def.fill = hex(sym.color); def.line = (sym.outline && sym.outline.color) ? hex(sym.outline.color) : def.fill; def.fillOp = 0.8;
+      }
+    } catch (e) { /* keep defaults */ }
+    return def;
+  }
+  const styleFor = lyr => ({ color: lyr.style.line, weight: lyr.style.weight, opacity: 1, fillColor: lyr.style.fill, fillOpacity: lyr.style.fillOp });
+
+  function popupHtml(lyr, f) {
+    const p = (f && f.properties) || {};
+    const list = lyr.fields.length ? lyr.fields : Object.keys(p).map(k => ({ name: k, alias: k, type: '' }));
+    let rows = '';
+    list.forEach(fd => {
+      if (!(fd.name in p)) return;
+      const v = p[fd.name];
+      let txt;
+      if (v === null || v === undefined || v === '') txt = '<span class="nil">null</span>';
+      else if (GGCore.fieldKind(fd.type) === 'date') txt = esc(GGCore.fmtDate(v));
+      else txt = esc(typeof v === 'object' ? JSON.stringify(v) : v);
+      rows += '<tr><th>' + esc(fd.alias || fd.name) + '</th><td>' + txt + '</td></tr>';
+    });
+    return '<div class="pop-title">' + esc(lyr.name) + '</div><div class="pop-scroll"><table>' + rows + '</table></div>';
+  }
+
+  async function addFromInput() {
+    const raw = $('#urlInput').value.trim();
+    if (!raw) { toast('Paste a layer address first.', 'warn'); return; }
+    if (!/^https?:\/\//i.test(raw)) { toast('The address must start with https:// (or http://).', 'warn'); return; }
+    const tm = /[?&]token=([^&#]+)/.exec(raw);
+    state.token = $('#tokenInput').value.trim() || (tm ? decodeURIComponent(tm[1]) : '');
+    const url = normalizeUrl(raw);
+    $('#addBtn').disabled = true; busy(1); setMsg('Reading the service…');
+    try {
+      const meta = await arcRequest(url, { f: 'json' });
+      if (Array.isArray(meta.fields)) {
+        await addLayer(url, meta, true);
+      } else if (Array.isArray(meta.layers)) {
+        const list = meta.layers.filter(l => !l.subLayerIds || !l.subLayerIds.length).slice(0, 20);
+        if (!list.length) throw new Error('This service has no drawable layers.');
+        let first = true, added = 0, lastErr = null;
+        for (const l of list) {
+          try { const m = await arcRequest(url + '/' + l.id, { f: 'json' }); await addLayer(url + '/' + l.id, m, first); first = false; added++; }
+          catch (e) { lastErr = e; }
+        }
+        if (!added) throw lastErr || new Error('No layer could be added.');
+        toast(added + ' layer' + (added > 1 ? 's' : '') + ' added. Only the first is switched on; tick the others to draw them.');
+      } else {
+        throw new Error('This address is not an ArcGIS layer or service. It should end in /FeatureServer/0 or /MapServer/0.');
+      }
+    } catch (e) {
+      if (e.code === 499 || e.code === 498) toast('This layer needs a token. Paste it in the Token box and try again.', 'err');
+      else toast(e.message || String(e), 'err');
+      setMsg('Could not add the layer: ' + (e.message || e));
+    } finally { busy(-1); $('#addBtn').disabled = false; }
+  }
+
+  async function addLayer(url, meta, visible) {
+    if (!meta.geometryType) throw new Error('“' + (meta.name || 'This layer') + '” is a table without geometry, so it can’t be drawn on a map or saved as SHP/KML.');
+    if (meta.capabilities && !/query/i.test(meta.capabilities)) throw new Error('“' + meta.name + '” does not allow queries, so its data cannot be downloaded.');
+    const adv = meta.advancedQueryCapabilities || {};
+    const oidF = (meta.fields || []).find(f => f.type === 'esriFieldTypeOID');
+    const lyr = {
+      id: ++seq, url, meta, name: meta.name || ('Layer ' + seq), visible, open: false,
+      geom: meta.geometryType, fields: (meta.fields || []).filter(f => !/Geometry|Blob|Raster|XML/.test(f.type)).map(f => ({ name: f.name, alias: f.alias || f.name, type: f.type })),
+      oid: oidF ? oidF.name : (meta.objectIdField || 'OBJECTID'), displayField: meta.displayField || '',
+      maxRec: meta.maxRecordCount || 1000, paging: !!adv.supportsPagination, orderBy: !!adv.supportsOrderBy,
+      fmt: 'geojson', style: styleFromMeta(meta, seq - 1), where: '', minZoom: 0,
+      loaded: [], count: null, note: '', noteKind: '', reqId: 0, abort: null
+    };
+    try { const c = await arcRequest(url + '/query', { where: '1=1', returnCountOnly: true }); lyr.count = (typeof c.count === 'number') ? c.count : null; } catch (e) { /* count is optional */ }
+    lyr.minZoom = lyr.count > 20000 ? 16 : lyr.count > 3000 ? 14 : 0;
+    lyr.gj = L.geoJSON(null, {
+      style: () => styleFor(lyr),
+      pointToLayer: (f, ll) => L.circleMarker(ll, Object.assign({ radius: 5 }, styleFor(lyr)))
+    });
+    lyr.gj.bindPopup(layer => popupHtml(lyr, layer.feature), { maxWidth: 380, maxHeight: 320, autoPanPadding: [30, 30] });
+    lyr.gj.on('mouseover', e => { if (!drawMode && e.layer.setStyle) e.layer.setStyle({ color: '#f5b301', weight: lyr.style.weight + 2 }); });
+    lyr.gj.on('mouseout', e => { if (e.layer.setStyle) lyr.gj.resetStyle(e.layer); });
+    if (visible) lyr.gj.addTo(map);
+    layers.push(lyr);
+    if (visible || !activeId) activeId = lyr.id;
+    renderContents();
+    if (visible) await zoomToLayer(lyr);
+    renderTable();
+  }
+
+  function extentFromMeta(meta) {
+    const e = meta.extent; if (!e) return null;
+    const wk = e.spatialReference && (e.spatialReference.latestWkid || e.spatialReference.wkid);
+    const merc = (x, y) => [Math.atan(Math.sinh(y / 6378137)) * 180 / Math.PI, x / 6378137 * 180 / Math.PI];
+    if (wk === 4326) return L.latLngBounds([e.ymin, e.xmin], [e.ymax, e.xmax]);
+    if ([3857, 102100, 102113, 900913].indexOf(wk) >= 0) return L.latLngBounds(merc(e.xmin, e.ymin), merc(e.xmax, e.ymax));
+    return null;
+  }
+  async function zoomToLayer(lyr) {
+    busy(1);
+    try {
+      let bounds = null;
+      try {
+        const r = await arcRequest(lyr.url + '/query', { where: lyr.where || '1=1', returnExtentOnly: true, outSR: 4326, f: 'json' });
+        const e = r.extent;
+        if (e && [e.xmin, e.ymin, e.xmax, e.ymax].every(v => typeof v === 'number' && isFinite(v)) &&
+            Math.abs(e.xmin) <= 180 && Math.abs(e.xmax) <= 180 && Math.abs(e.ymin) <= 90 && Math.abs(e.ymax) <= 90) {
+          bounds = L.latLngBounds([e.ymin, e.xmin], [e.ymax, e.xmax]);
+        }
+      } catch (err) { /* fall through */ }
+      if (!bounds) bounds = extentFromMeta(lyr.meta);
+      if (bounds) map.fitBounds(bounds, { padding: [30, 30], maxZoom: 19 });
+      if (!bounds || map.getZoom() < lyr.minZoom) {
+        // Layer is too big to draw at this scale: jump to a real feature so something shows immediately.
+        const p = { where: lyr.where || '1=1', outFields: lyr.oid, returnGeometry: true, outSR: 4326 };
+        if (lyr.paging) p.resultRecordCount = 1;
+        const s = await queryFeatures(lyr, p, null);
+        const f = s.features.find(x => x.geometry);
+        if (f) {
+          const b = L.geoJSON(f).getBounds();
+          map.fitBounds(b, { maxZoom: Math.max(lyr.minZoom + 1, 17) });
+          if (map.getZoom() < lyr.minZoom) map.setZoom(lyr.minZoom);
+        }
+      }
+    } catch (e) { toast('Could not zoom to the layer: ' + e.message, 'warn'); }
+    finally { busy(-1); scheduleRefresh(); }
+  }
+
+  /* ---------- loading features for the map window ---------- */
+  let refreshTimer = null;
+  function scheduleRefresh() { clearTimeout(refreshTimer); refreshTimer = setTimeout(() => layers.forEach(refreshLayer), 250); }
+  map.on('moveend', scheduleRefresh);
+
+  function setNote(lyr, text, kind) {
+    lyr.note = text; lyr.noteKind = kind || '';
+    const el = $('#note-' + lyr.id);
+    if (el) { el.textContent = text; el.className = 'note ' + (kind || ''); }
+    if (lyr.id === activeId) setMsg(lyr.name + ': ' + text);
+  }
+  const clampLng = v => Math.max(-180, Math.min(180, v)), clampLat = v => Math.max(-90, Math.min(90, v));
+  async function refreshLayer(lyr) {
+    if (!layers.includes(lyr) || !lyr.visible) return;
+    if (lyr.abort) lyr.abort.abort();
+    const z = map.getZoom();
+    if (z < lyr.minZoom) {
+      lyr.reqId++; lyr.gj.clearLayers(); lyr.loaded = [];
+      setNote(lyr, 'Zoom in to level ' + lyr.minZoom + ' or closer to draw this layer (now ' + z + ').', 'warn');
+      if (lyr.id === activeId) renderTable();
+      return;
+    }
+    const my = ++lyr.reqId; lyr.abort = new AbortController();
+    setNote(lyr, 'Loading…');
+    const b = map.getBounds();
+    const params = {
+      where: lyr.where || '1=1',
+      geometry: [clampLng(b.getWest()), clampLat(b.getSouth()), clampLng(b.getEast()), clampLat(b.getNorth())].join(','),
+      geometryType: 'esriGeometryEnvelope', inSR: 4326, spatialRel: 'esriSpatialRelIntersects',
+      outFields: '*', returnGeometry: true, outSR: 4326
+    };
+    if (lyr.paging) params.resultRecordCount = Math.min(lyr.maxRec, 3000);
+    if (lyr.geom !== 'esriGeometryPoint') params.maxAllowableOffset = 360 / (256 * Math.pow(2, z));
+    busy(1);
+    try {
+      const res = await queryFeatures(lyr, params, lyr.abort.signal);
+      if (my !== lyr.reqId) return;
+      lyr.loaded = res.features; lyr.gj.clearLayers(); lyr.gj.addData(res.features);
+      if (res.exceeded) setNote(lyr, 'Showing the first ' + nf(res.features.length) + ' features in view. Zoom in to see the rest.', 'warn');
+      else setNote(lyr, nf(res.features.length) + ' feature' + (res.features.length === 1 ? '' : 's') + ' in view.');
+      if (lyr.id === activeId) renderTable();
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+      if (my === lyr.reqId) setNote(lyr, 'Error: ' + e.message, 'err');
+    } finally { busy(-1); }
+  }
+
+  /* ---------- contents panel ---------- */
+  const geomLabel = g => ({ esriGeometryPolygon: 'Polygon', esriGeometryPolyline: 'Line', esriGeometryPoint: 'Point', esriGeometryMultipoint: 'Multipoint' }[g] || g);
+  function cardHtml(lyr) {
+    const s = lyr.style;
+    return '<div class="card' + (lyr.id === activeId ? ' active' : '') + '" data-id="' + lyr.id + '" style="border-left-color:' + esc(s.line) + '">' +
+      '<div class="card-head"><input type="checkbox" class="c-vis" aria-label="Show layer"' + (lyr.visible ? ' checked' : '') + '>' +
+      '<div class="sw" style="background:' + esc(s.fillOp > 0.02 ? s.fill : 'transparent') + ';border-color:' + esc(s.line) + '"></div>' +
+      '<div class="card-title" data-act="activate"><b title="' + esc(lyr.name) + '">' + esc(lyr.name) + '</b><small>' + geomLabel(lyr.geom) + (lyr.count !== null ? ' · ' + nf(lyr.count) + ' features' : '') + '</small></div>' +
+      '<button class="icon-btn" data-act="toggle" title="Layer settings" aria-label="Layer settings">' + (lyr.open ? '▴' : '▾') + '</button></div>' +
+      '<div class="note ' + esc(lyr.noteKind) + '" id="note-' + lyr.id + '">' + esc(lyr.note) + '</div>' +
+      (lyr.open ?
+        '<div class="card-body">' +
+        '<label>Outline color <input type="color" class="c-line" value="' + esc(s.line) + '"></label>' +
+        '<label>Fill color <input type="color" class="c-fill" value="' + esc(s.fill) + '"></label>' +
+        '<label>Fill opacity <input type="range" class="c-fo" min="0" max="100" value="' + Math.round(s.fillOp * 100) + '"></label>' +
+        '<label>Line width <input type="range" class="c-w" min="0.5" max="5" step="0.5" value="' + s.weight + '"></label>' +
+        '<label>Draw from zoom <input type="number" class="c-mz" min="0" max="21" value="' + lyr.minZoom + '"></label>' +
+        '<div><div class="hint" style="margin-bottom:4px">Definition query (SQL)</div><div class="where-row"><input type="text" class="c-where" value="' + esc(lyr.where) + '" placeholder="e.g. municipality = \'OAK PARK\'" spellcheck="false"><button class="btn" data-act="apply">Apply</button></div></div>' +
+        '<div class="card-btns"><button class="btn" data-act="zoom">Zoom to</button><button class="btn" data-act="info">Fields</button><button class="btn" data-act="export">Download</button><button class="btn" data-act="remove">Remove</button></div>' +
+        '</div>' : '') +
+      '</div>';
+  }
+  function renderContents() {
+    const box = $('#layerList');
+    if (!layers.length) { box.innerHTML = '<div class="empty">No layers yet. Paste a layer address in the bar above and press “Add to map”.</div>'; return; }
+    box.innerHTML = layers.slice().reverse().map(cardHtml).join('');
+  }
+  function restyle(lyr) {
+    lyr.gj.setStyle(styleFor(lyr));
+    const card = $('.card[data-id="' + lyr.id + '"]');
+    if (card) {
+      card.style.borderLeftColor = lyr.style.line;
+      const sw = $('.sw', card); sw.style.background = lyr.style.fillOp > 0.02 ? lyr.style.fill : 'transparent'; sw.style.borderColor = lyr.style.line;
+    }
+  }
+  function setActive(id) {
+    activeId = id;
+    $$('#layerList .card').forEach(c => c.classList.toggle('active', Number(c.dataset.id) === id));
+    renderTable();
+  }
+  async function applyWhere(lyr, val) {
+    const prev = lyr.where; val = val.trim(); busy(1);
+    try {
+      const c = await arcRequest(lyr.url + '/query', { where: val || '1=1', returnCountOnly: true });
+      lyr.where = val;
+      if (val && c.count === 0) { toast('No features match that query.', 'warn'); refreshLayer(lyr); }
+      else { if (val) toast(nf(c.count) + ' feature' + (c.count === 1 ? '' : 's') + ' match.'); await zoomToLayer(lyr); }
+    } catch (e) { lyr.where = prev; toast('Query problem: ' + e.message, 'err'); }
+    finally { busy(-1); }
+  }
+  const list = $('#layerList');
+  list.addEventListener('input', e => {
+    const card = e.target.closest('.card'); if (!card) return; const lyr = byId(card.dataset.id); if (!lyr) return; const t = e.target;
+    if (t.classList.contains('c-line')) { lyr.style.line = t.value; restyle(lyr); }
+    else if (t.classList.contains('c-fill')) { lyr.style.fill = t.value; if (lyr.style.fillOp < 0.02) { lyr.style.fillOp = 0.3; } restyle(lyr); }
+    else if (t.classList.contains('c-fo')) { lyr.style.fillOp = t.value / 100; restyle(lyr); }
+    else if (t.classList.contains('c-w')) { lyr.style.weight = Number(t.value); restyle(lyr); }
+  });
+  list.addEventListener('change', e => {
+    const card = e.target.closest('.card'); if (!card) return; const lyr = byId(card.dataset.id); if (!lyr) return; const t = e.target;
+    if (t.classList.contains('c-vis')) {
+      lyr.visible = t.checked;
+      if (lyr.visible) { lyr.gj.addTo(map); setActive(lyr.id); refreshLayer(lyr); }
+      else { if (lyr.abort) lyr.abort.abort(); map.removeLayer(lyr.gj); setNote(lyr, ''); }
+    } else if (t.classList.contains('c-mz')) {
+      lyr.minZoom = Math.max(0, Math.min(21, parseInt(t.value, 10) || 0)); refreshLayer(lyr);
+    }
+  });
+  list.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target.classList.contains('c-where')) {
+      const lyr = byId(e.target.closest('.card').dataset.id); applyWhere(lyr, e.target.value);
+    }
+  });
+  list.addEventListener('click', e => {
+    const btn = e.target.closest('[data-act]'); const card = e.target.closest('.card'); if (!btn || !card) return;
+    const lyr = byId(card.dataset.id); if (!lyr) return; const act = btn.dataset.act;
+    if (act === 'activate') setActive(lyr.id);
+    else if (act === 'toggle') { lyr.open = !lyr.open; setActive(lyr.id); renderContents(); }
+    else if (act === 'apply') applyWhere(lyr, $('.c-where', card).value);
+    else if (act === 'zoom') zoomToLayer(lyr);
+    else if (act === 'info') showInfo(lyr);
+    else if (act === 'export') openExport('shp', lyr.id);
+    else if (act === 'remove') {
+      if (lyr.abort) lyr.abort.abort(); map.removeLayer(lyr.gj);
+      layers.splice(layers.indexOf(lyr), 1); hi.clearLayers();
+      if (activeId === lyr.id) activeId = layers.length ? layers[layers.length - 1].id : null;
+      renderContents(); renderTable();
+    }
+  });
+
+  function showInfo(lyr) {
+    const m = lyr.meta;
+    const rows = lyr.fields.map(f => '<tr><td>' + esc(f.name) + '</td><td>' + esc(f.alias) + '</td><td>' + esc(String(f.type).replace('esriFieldType', '')) + '</td></tr>').join('');
+    $('#infoTitle').textContent = lyr.name;
+    $('#infoBody').innerHTML =
+      '<div class="hint">' + esc(geomLabel(lyr.geom)) + ' layer · ' + (lyr.count !== null ? nf(lyr.count) + ' features · ' : '') + 'server limit ' + nf(lyr.maxRec) + ' features per request · ' + (lyr.paging ? 'paging supported' : 'no paging (falls back to object-ID batches)') + '</div>' +
+      (m.description ? '<div>' + esc(String(m.description).replace(/<[^>]*>/g, '').slice(0, 600)) + '</div>' : '') +
+      '<div style="overflow:auto;max-height:50vh"><table class="ftable"><thead><tr><th>Field</th><th>Alias</th><th>Type</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      '<div class="hint">Service address: ' + esc(lyr.url) + '</div>';
+    $('#infoModal').hidden = false;
+  }
+
+  /* ---------- attribute table ---------- */
+  function renderTable() {
+    const lyr = activeLayer(), body = $('#tableBody');
+    $('#dockTitle').textContent = lyr ? 'Attribute table – ' + lyr.name : 'Attribute table';
+    if (!lyr) { $('#dockSub').textContent = ''; body.innerHTML = '<div class="empty">Add a layer to see its attributes here.</div>'; return; }
+    if (!lyr.loaded.length) {
+      $('#dockSub').textContent = '';
+      body.innerHTML = '<div class="empty">' + esc(lyr.visible ? (lyr.note || 'No features in the current map view.') : 'This layer is switched off.') + '</div>'; return;
+    }
+    const cols = lyr.fields.length ? lyr.fields : Object.keys(lyr.loaded[0].properties || {}).map(k => ({ name: k, alias: k, type: '' }));
+    const shown = lyr.loaded.slice(0, 300);
+    $('#dockSub').textContent = 'showing ' + nf(shown.length) + ' of ' + nf(lyr.loaded.length) + ' features in view – click a row to zoom to it';
+    let h = '<table><thead><tr>' + cols.map(c => '<th>' + esc(c.alias || c.name) + '</th>').join('') + '</tr></thead><tbody>';
+    shown.forEach((f, i) => {
+      const p = f.properties || {};
+      h += '<tr data-i="' + i + '">' + cols.map(c => {
+        const v = p[c.name];
+        return '<td>' + (v === null || v === undefined ? '' : esc(GGCore.fieldKind(c.type) === 'date' ? GGCore.fmtDate(v) : (typeof v === 'object' ? JSON.stringify(v) : v))) + '</td>';
+      }).join('') + '</tr>';
+    });
+    body.innerHTML = h + '</tbody></table>';
+  }
+  $('#tableBody').addEventListener('click', e => {
+    const tr = e.target.closest('tr[data-i]'); const lyr = activeLayer(); if (!tr || !lyr) return;
+    const f = lyr.loaded[Number(tr.dataset.i)]; if (!f || !f.geometry) return;
+    hi.clearLayers(); hi.addData(f); hi.bringToFront();
+    const b = hi.getBounds(); if (b.isValid()) map.fitBounds(b, { maxZoom: 19, padding: [60, 60] });
+  });
+  $('#btnTable').addEventListener('click', () => toggleDock());
+  $('#dockClose').addEventListener('click', () => toggleDock(false));
+  function toggleDock(force) {
+    const d = $('#dock'); const show = force === undefined ? d.hidden : force;
+    d.hidden = !show; $('#btnTable').classList.toggle('on', show); setTimeout(() => map.invalidateSize(), 50);
+  }
+  map.on('click', () => { hi.clearLayers(); });
+
+  /* ---------- download dialog ---------- */
+  const exModal = $('#exportModal');
+  function fillExportLayers(sel) {
+    $('#exLayer').innerHTML = layers.map(l => '<option value="' + l.id + '">' + esc(l.name) + '</option>').join('');
+    $('#exLayer').value = String(sel);
+  }
+  function syncExportForm() {
+    const lyr = byId($('#exLayer').value); if (!lyr) return;
+    $('#exName').value = GGCore.sanitizeName(lyr.name);
+    const strs = lyr.fields.filter(f => GGCore.fieldKind(f.type) === 'str' && f.type !== 'esriFieldTypeGlobalID' && f.type !== 'esriFieldTypeGUID');
+    const opts = strs.concat(lyr.fields.filter(f => strs.indexOf(f) < 0));
+    $('#exNameField').innerHTML = opts.map(f => '<option value="' + esc(f.name) + '">' + esc(f.alias || f.name) + '</option>').join('');
+    const pref = lyr.fields.find(f => f.name === lyr.displayField) || strs[0] || opts[0];
+    if (pref) $('#exNameField').value = pref.name;
+    $('#exUseWhere').checked = !!lyr.where; $('#exUseWhere').disabled = !lyr.where;
+    $('#exWhereLbl').textContent = lyr.where ? 'Apply the layer’s definition query: ' + lyr.where : 'No definition query on this layer';
+    const hasBox = !!boxLayer;
+    $('#areaBox').disabled = !hasBox;
+    $('#areaBoxNote').textContent = hasBox ? 'The dashed orange box you drew on the map' : 'Use “Draw box” on the ribbon first';
+    if (!hasBox && $('#areaBox').checked) $('input[name=area][value=view]').checked = true;
+    updateFmtUi();
+  }
+  function updateFmtUi() {
+    const f = $('input[name=fmt]:checked').value;
+    $('#exNameFieldWrap').hidden = !(f === 'kml' || f === 'kmz');
+  }
+  $$('input[name=fmt]').forEach(r => r.addEventListener('change', updateFmtUi));
+  $('#exLayer').addEventListener('change', syncExportForm);
+  function setExStatus(t, kind) { const s = $('#exStatus'); s.textContent = t; s.className = 'ex-status ' + (kind || ''); }
+  function setExProgress(p) { $('#exBarWrap').hidden = p === null; if (p !== null) $('#exBar').style.width = Math.round(p * 100) + '%'; }
+  function openExport(fmt, layerId) {
+    if (!layers.length) { toast('Add a layer to the map first.', 'warn'); return; }
+    if (exportRunning) { exModal.hidden = false; return; }
+    const lyr = byId(layerId) || activeLayer();
+    fillExportLayers(lyr.id);
+    $('input[name=fmt][value=' + fmt + ']').checked = true;
+    $('input[name=area][value=' + (boxLayer ? 'box' : 'view') + ']').checked = true;
+    syncExportForm(); setExStatus(''); setExProgress(null);
+    exModal.hidden = false;
+  }
+  $$('[data-export]').forEach(b => b.addEventListener('click', () => openExport(b.dataset.export)));
+
+  function filterParams(lyr, area, useWhere) {
+    const p = { where: (useWhere && lyr.where) ? lyr.where : '1=1' };
+    let b = null;
+    if (area === 'view') b = map.getBounds(); else if (area === 'box' && boxLayer) b = boxLayer.getBounds();
+    if (b) Object.assign(p, {
+      geometry: [clampLng(b.getWest()), clampLat(b.getSouth()), clampLng(b.getEast()), clampLat(b.getNorth())].join(','),
+      geometryType: 'esriGeometryEnvelope', inSR: 4326, spatialRel: 'esriSpatialRelIntersects'
+    });
+    return p;
+  }
+  function readExportForm() {
+    const lyr = byId($('#exLayer').value);
+    const noCap = $('#exNoCap').checked;
+    return {
+      lyr, fmt: $('input[name=fmt]:checked').value, area: $('input[name=area]:checked').value,
+      useWhere: $('#exUseWhere').checked, noCap,
+      cap: noCap ? Infinity : Math.max(1, Math.min(5000000, parseInt($('#exCap').value, 10) || 20000)),
+      name: GGCore.sanitizeName($('#exName').value || (lyr && lyr.name)), nameField: $('#exNameField').value
+    };
+  }
+  $('#exNoCap').addEventListener('change', () => { $('#exCap').disabled = $('#exNoCap').checked; });
+  $('#exCount').addEventListener('click', async () => {
+    const o = readExportForm(); if (!o.lyr) return;
+    setExStatus('Counting…'); busy(1);
+    try {
+      const r = await arcRequest(o.lyr.url + '/query', Object.assign(filterParams(o.lyr, o.area, o.useWhere), { returnCountOnly: true }));
+      setExStatus(nf(r.count) + ' feature' + (r.count === 1 ? '' : 's') + ' match this selection' + (r.count > o.cap ? ' – only the first ' + nf(o.cap) + ' will be downloaded (raise “Maximum features” to get more).' : (o.noCap ? ' – all of it will be downloaded.' : '.')), r.count > o.cap ? 'warn' : 'ok');
+    } catch (e) { setExStatus(e.message, 'err'); } finally { busy(-1); }
+  });
+
+  async function fetchAll(lyr, filter, target, onProg, signal) {
+    const page = Math.max(1, Math.min(lyr.maxRec, 1000));
+    const jobs = [];
+    if (lyr.paging) {
+      for (let off = 0; off < target; off += page) {
+        const p = Object.assign({}, filter, { outFields: '*', returnGeometry: true, outSR: 4326, resultOffset: off, resultRecordCount: Math.min(page, target - off) });
+        if (lyr.orderBy) p.orderByFields = lyr.oid;
+        jobs.push(p);
+      }
+    } else {
+      const ir = await arcRequest(lyr.url + '/query', Object.assign({}, filter, { returnIdsOnly: true }), signal);
+      const ids = (ir.objectIds || []).slice().sort((a, b) => a - b).slice(0, target);
+      const proxied = state.proxyMode === 'always' || proxyHosts.has(hostOf(lyr.url));
+      const chunk = Math.min(page, proxied ? 150 : 500);
+      for (let i = 0; i < ids.length; i += chunk) jobs.push({ objectIds: ids.slice(i, i + chunk).join(','), outFields: '*', returnGeometry: true, outSR: 4326 });
+    }
+    const results = new Array(jobs.length); let next = 0, done = 0, failed = null;
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    async function worker() {
+      while (!failed) {
+        if (signal.aborted) throw new DOMException('Stopped', 'AbortError');
+        const i = next++; if (i >= jobs.length) return;
+        let attempt = 0;
+        for (;;) {
+          try { results[i] = (await queryFeatures(lyr, jobs[i], signal)).features; break; }
+          catch (e) {
+            if (e && e.name === 'AbortError') throw e;
+            if (++attempt > 2) { failed = e; throw e; }
+            await wait(800 * attempt);
+          }
+        }
+        done += results[i].length; onProg(done, target);
+      }
+    }
+    await Promise.all([worker(), worker(), worker()]);
+    return [].concat.apply([], results);
+  }
+  function download(blob, filename) {
+    const a = document.createElement('a'), u = URL.createObjectURL(blob);
+    a.href = u; a.download = filename; document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(u); a.remove(); }, 4000);
+  }
+  function setExportBusy(on) {
+    exportRunning = on;
+    $('#exGo').disabled = on; $('#exCount').disabled = on;
+    $('#exCancel').textContent = on ? 'Stop' : 'Close';
+    $$('#exportModal input, #exportModal select').forEach(el => { el.disabled = on; });
+    if (!on) syncExportForm();
+  }
+  async function runExport() {
+    const o = readExportForm(); if (!o.lyr) return;
+    if ((o.fmt === 'shp' || o.fmt === 'kmz') && typeof JSZip === 'undefined') { setExStatus('The ZIP library did not load (needs internet). KML and GeoJSON still work.', 'err'); return; }
+    exportAbort = new AbortController(); const signal = exportAbort.signal;
+    setExportBusy(true); setExProgress(0); setExStatus('Counting features…'); busy(1);
+    try {
+      const filter = filterParams(o.lyr, o.area, o.useWhere);
+      const c = await arcRequest(o.lyr.url + '/query', Object.assign({}, filter, { returnCountOnly: true }), signal);
+      const total = c.count || 0;
+      if (!total) throw new Error('No features match this selection. Try “Entire layer” or a different area.');
+      const target = Math.min(total, o.cap);
+      setExStatus('Downloading ' + nf(target) + ' of ' + nf(total) + ' features…');
+      const feats = await fetchAll(o.lyr, filter, target, (d, t) => { setExProgress(0.85 * d / t); setExStatus('Downloaded ' + nf(d) + ' of ' + nf(t) + ' features…'); }, signal);
+      if (!feats.length) throw new Error('The server returned no features.');
+      setExStatus('Building ' + o.fmt.toUpperCase() + ' file…'); setExProgress(0.88);
+      await new Promise(r => setTimeout(r, 30));
+      const st = o.lyr.style; let blob, fileName;
+      if (o.fmt === 'shp') {
+        const files = GGCore.buildShapefile(feats, { name: o.name, geometryType: o.lyr.geom, fields: o.lyr.fields });
+        const zip = new JSZip(); Object.keys(files).forEach(n => zip.file(n, files[n]));
+        blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } }, m => setExProgress(0.9 + 0.1 * m.percent / 100));
+        fileName = o.name + '.zip';
+      } else if (o.fmt === 'kml' || o.fmt === 'kmz') {
+        const parts = GGCore.buildKml(feats, { name: o.lyr.name, fields: o.lyr.fields, nameField: o.nameField, lineColor: st.line, fillColor: st.fill, fillOpacity: st.fillOp });
+        const kml = new Blob(parts, { type: 'application/vnd.google-earth.kml+xml' });
+        if (o.fmt === 'kml') { blob = kml; fileName = o.name + '.kml'; }
+        else {
+          const zip = new JSZip(); zip.file('doc.kml', kml);
+          blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', mimeType: 'application/vnd.google-earth.kmz' }, m => setExProgress(0.9 + 0.1 * m.percent / 100));
+          fileName = o.name + '.kmz';
+        }
+      } else {
+        blob = new Blob(GGCore.buildGeoJSONParts(feats), { type: 'application/geo+json' }); fileName = o.name + '.geojson';
+      }
+      setExProgress(1); download(blob, fileName);
+      const msg = 'Saved ' + fileName + ' – ' + nf(feats.length) + ' features, ' + (blob.size / 1048576).toFixed(1) + ' MB' + (total > feats.length ? '. The limit cut off ' + nf(total - feats.length) + ' features; raise “Maximum features” for more.' : '.');
+      setExStatus(msg, total > feats.length ? 'warn' : 'ok'); toast(msg);
+    } catch (e) {
+      if (e && e.name === 'AbortError') { setExStatus('Stopped.', 'warn'); setExProgress(null); }
+      else { setExStatus(e.message || String(e), 'err'); setExProgress(null); toast('Download failed: ' + (e.message || e), 'err'); }
+    } finally { busy(-1); setExportBusy(false); exportAbort = null; }
+  }
+  $('#exGo').addEventListener('click', runExport);
+  $('#exCancel').addEventListener('click', () => { if (exportRunning && exportAbort) exportAbort.abort(); else exModal.hidden = true; });
+
+  /* ---------- misc wiring ---------- */
+  (function wireProxy() {
+    const sel = $('#proxySel'), tpl = $('#proxyTpl');
+    sel.value = state.proxyMode;
+    const sync = () => sel.parentNode.classList.toggle('proxy-on', state.proxyMode === 'always' || proxyHosts.size > 0);
+    sel.addEventListener('change', () => { state.proxyMode = sel.value; proxyHosts.clear(); proxyToasted.clear(); sync(); });
+    tpl.addEventListener('change', () => { state.proxyTpl = tpl.value.trim(); proxyHosts.clear(); proxyToasted.clear(); });
+    setInterval(sync, 1500);
+  })();
+  $('#addBtn').addEventListener('click', addFromInput);
+  $('#urlInput').addEventListener('keydown', e => { if (e.key === 'Enter') addFromInput(); });
+  $('#btnZoomLayer').addEventListener('click', () => { const l = activeLayer(); if (l) zoomToLayer(l); else toast('Add a layer first.', 'warn'); });
+  $('#helpBtn').addEventListener('click', () => { $('#helpModal').hidden = false; });
+  $('#btnMenu').addEventListener('click', () => $('#contents').classList.toggle('open'));
+  $$('.overlay').forEach(o => {
+    o.addEventListener('mousedown', e => { if (e.target === o && !(o === exModal && exportRunning)) o.hidden = true; });
+    $$('[data-close]', o).forEach(b => b.addEventListener('click', () => { if (!(o === exModal && exportRunning)) o.hidden = true; }));
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      if (drawMode) setDrawMode(false);
+      $$('.overlay').forEach(o => { if (!(o === exModal && exportRunning)) o.hidden = true; });
+    }
+  });
+  window.addEventListener('resize', () => map.invalidateSize());
+  renderContents(); renderTable();
+})();
+</script>
+</body>
+</html>
