@@ -57,6 +57,26 @@ button{cursor:pointer}
 .tool select{border:1px solid var(--line);border-radius:4px;padding:5px 6px;background:#fff;max-width:170px}
 .tool input[type=text]{border:1px solid var(--line);border-radius:4px;padding:5px 7px;background:#fff;width:186px}
 .tool.proxy-on select{background:var(--accent-l);border-color:var(--accent)}
+.geo-wrap{position:relative}
+.geo-wrap input{background:#0f1c26;border:1px solid #2b3f4d;color:#fff;border-radius:6px;padding:8px 10px;width:260px;font-size:13px}
+.geo-wrap input::placeholder{color:#8aa0ab}
+.geo-wrap input:focus{outline:2px solid var(--accent);border-color:var(--accent)}
+#geoResults{position:fixed;background:#fff;border:1px solid var(--line);border-radius:6px;box-shadow:0 10px 28px rgba(0,0,0,.25);z-index:5000;max-height:280px;overflow:auto}
+#geoResults .gi{padding:8px 10px;font-size:13px;cursor:pointer;border-bottom:1px solid #f0f0f0;color:var(--ink)}
+#geoResults .gi:last-child{border-bottom:none}
+#geoResults .gi:hover,#geoResults .gi.sel{background:var(--accent-l)}
+#geoResults .gi b{font-weight:600}
+#geoResults .gi small{display:block;color:var(--ink-2);margin-top:1px}
+#geoResults .gi.hint{cursor:default;color:var(--ink-2)}
+.find-results{display:grid;gap:8px;max-height:min(50vh,420px);overflow:auto}
+.find-item{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-radius:6px;padding:9px 10px}
+.find-item img{width:44px;height:44px;object-fit:cover;border-radius:4px;background:#eee;flex:none}
+.find-item .fi-body{flex:1;min-width:0}
+.find-item .fi-title{font-weight:600;font-size:13.5px}
+.find-item .fi-meta{font-size:12px;color:var(--ink-2);margin-top:1px}
+.find-item .fi-meta span{margin-right:8px}
+.find-item .fi-snippet{font-size:12.5px;color:var(--ink-2);margin-top:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.find-item button{flex:none;align-self:center}
 .only-narrow{display:none}
 
 /* ---------- workspace ---------- */
@@ -152,6 +172,7 @@ button{cursor:pointer}
   .top{flex-wrap:wrap;gap:8px}
   .urlbar{flex-basis:100%;order:3;flex-wrap:wrap}
   #tokenInput{width:100%}
+  .geo-wrap,.geo-wrap input{width:100%}
   .only-narrow{display:flex}
   #contents{position:absolute;z-index:1200;top:0;bottom:0;left:0;width:min(330px,88vw);transform:translateX(-101%);transition:transform .2s;box-shadow:4px 0 20px rgba(0,0,0,.25)}
   #contents.open{transform:none}
@@ -172,7 +193,12 @@ button{cursor:pointer}
              placeholder="Paste an ArcGIS FeatureServer or MapServer layer URL"
              value="https://gis.cookcountyil.gov/hosting/rest/services/Hosted/Parcel2021_enhancedAll/FeatureServer/0">
       <input id="tokenInput" type="password" autocomplete="off" aria-label="Access token" placeholder="Token (private layers only)">
+      <button class="btn" id="findBtn">Find layer…</button>
       <button class="btn primary" id="addBtn">Add to map</button>
+    </div>
+    <div class="geo-wrap">
+      <input id="geoQ" type="text" spellcheck="false" autocomplete="off" aria-label="Search a place, address or coordinates"
+             placeholder="🔍 Address, city, state, country, or lat, lon…">
     </div>
     <button class="btn ghost" id="helpBtn">Help</button>
   </header>
@@ -278,13 +304,27 @@ button{cursor:pointer}
   </div>
 </div>
 
+<!-- Find a layer dialog -->
+<div class="overlay" id="findModal" hidden>
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="findTitle">
+    <div class="modal-head"><h2 id="findTitle">Find a layer on ArcGIS Online</h2><button class="x" data-close aria-label="Close">×</button></div>
+    <div class="modal-body">
+      <label class="fld"><span class="lbl">Search public layers (e.g. “parcels Nodaway County”)</span>
+        <input id="findQ" type="text" spellcheck="false" autocomplete="off" placeholder="Type a place or topic and pause…"></label>
+      <div class="find-results" id="findResults"><p class="hint">Search results appear here. Only public Feature and Map layers are shown — private or Esri-only layers won’t work with this tool.</p></div>
+    </div>
+    <div class="modal-foot"><span class="sp"></span><button class="btn" data-close>Close</button></div>
+  </div>
+</div>
+
 <!-- Help dialog -->
 <div class="overlay" id="helpModal" hidden>
   <div class="modal help" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
     <div class="modal-head"><h2 id="helpTitle">How to use</h2><button class="x" data-close aria-label="Close">×</button></div>
     <div class="modal-body">
       <ol>
-        <li>Paste the layer address (it ends in <code>/FeatureServer/0</code> or <code>/MapServer/3</code>) and press <b>Add to map</b>. A service address without a number adds all of its layers.</li>
+        <li>Paste the layer address (it ends in <code>/FeatureServer/0</code> or <code>/MapServer/3</code>) and press <b>Add to map</b>. A service address without a number adds all of its layers. Don't have an address? Press <b>Find layer…</b> next to the bar to search ArcGIS Online by place or topic (e.g. “parcels Nodaway County”) and add a result with one click — only public Feature/Map layers are shown, since that's the only kind this tool can read.</li>
+        <li>Use <b>Go to place</b> on the ribbon to jump the map to any address, city, state, or country — or paste raw coordinates like <code>41.85, -87.65</code> (lat, lon) to jump straight there. Powered by OpenStreetMap's free search, so results are place names and addresses, not parcel data.</li>
         <li>Big layers such as county parcels only draw once you zoom in (the minimum zoom is shown on the layer card). Zoom in, then click any shape to see its attributes.</li>
         <li>Use <b>Definition query</b> on the layer card to filter, for example <code>municipality = 'OAK PARK'</code>. The <b>Attribute table</b> lists what is loaded in the current view.</li>
         <li>Press <b>Shapefile</b>, <b>KML</b>, <b>KMZ</b> or <b>GeoJSON</b>. Choose the map view, a box you drew, or the entire layer, then press <b>Download</b>. Tick “Download every matching feature” to remove the size limit entirely and fetch everything that matches, however many features that is — for a county-wide parcel layer this can be a large file and take a while, since ArcGIS servers only return a few thousand features per request.</li>
@@ -1035,15 +1075,31 @@ const GGCore = (function () {
       geometryType: 'esriGeometryEnvelope', inSR: 4326, spatialRel: 'esriSpatialRelIntersects',
       outFields: '*', returnGeometry: true, outSR: 4326
     };
-    if (lyr.paging) params.resultRecordCount = Math.min(lyr.maxRec, 3000);
     if (lyr.geom !== 'esriGeometryPoint') params.maxAllowableOffset = 360 / (256 * Math.pow(2, z));
+    const VIEW_SAFETY_CAP = 200000; // hard stop so an accidental world-view zoom-out can't hang the browser forever
     busy(1);
     try {
-      const res = await queryFeatures(lyr, params, lyr.abort.signal);
+      let all = [], exceeded = false, pages = 0;
+      if (lyr.paging) {
+        params.resultRecordCount = lyr.maxRec;
+        let offset = 0;
+        for (;;) {
+          if (my !== lyr.reqId) return;
+          const res = await queryFeatures(lyr, Object.assign({}, params, { resultOffset: offset }), lyr.abort.signal);
+          all = all.concat(res.features); pages++;
+          if (!res.exceeded || res.features.length === 0 || all.length >= VIEW_SAFETY_CAP) { exceeded = res.exceeded && all.length >= VIEW_SAFETY_CAP; break; }
+          offset += res.features.length;
+          if (pages > 1) setNote(lyr, 'Loading… ' + nf(all.length) + ' features so far.');
+        }
+      } else {
+        params.resultRecordCount = lyr.maxRec;
+        const res = await queryFeatures(lyr, params, lyr.abort.signal);
+        all = res.features; exceeded = res.exceeded;
+      }
       if (my !== lyr.reqId) return;
-      lyr.loaded = res.features; lyr.gj.clearLayers(); lyr.gj.addData(res.features);
-      if (res.exceeded) setNote(lyr, 'Showing the first ' + nf(res.features.length) + ' features in view. Zoom in to see the rest.', 'warn');
-      else setNote(lyr, nf(res.features.length) + ' feature' + (res.features.length === 1 ? '' : 's') + ' in view.');
+      lyr.loaded = all; lyr.gj.clearLayers(); lyr.gj.addData(all);
+      if (exceeded) setNote(lyr, 'Showing the first ' + nf(all.length) + ' features in view (view limit reached). Zoom in or draw a smaller box to see the rest.', 'warn');
+      else setNote(lyr, nf(all.length) + ' feature' + (all.length === 1 ? '' : 's') + ' in view' + (pages > 1 ? ' (loaded in ' + pages + ' batches)' : '') + '.');
       if (lyr.id === activeId) renderTable();
     } catch (e) {
       if (e && e.name === 'AbortError') return;
@@ -1364,7 +1420,125 @@ const GGCore = (function () {
     tpl.addEventListener('change', () => { state.proxyTpl = tpl.value.trim(); proxyHosts.clear(); proxyToasted.clear(); });
     setInterval(sync, 1500);
   })();
+  (function wireGeoSearch() {
+    const input = $('#geoQ');
+    const box = document.createElement('div'); box.id = 'geoResults'; box.hidden = true; document.body.appendChild(box);
+    let timer = null, seq = 0, items = [], selIdx = -1, marker = null;
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+    function place() {
+      const r = input.getBoundingClientRect();
+      box.style.left = r.left + 'px'; box.style.top = (r.bottom + 4) + 'px'; box.style.width = Math.max(280, r.width) + 'px';
+    }
+    function hide() { box.hidden = true; box.innerHTML = ''; items = []; selIdx = -1; }
+    function parseCoords(text) {
+      const m = /^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/.exec(text.trim());
+      if (!m) return null;
+      const a = parseFloat(m[1]), b = parseFloat(m[2]);
+      if (Math.abs(a) > 90 || Math.abs(b) > 180) return null;
+      return { lat: a, lon: b };
+    }
+    function goTo(lat, lon, bbox, label) {
+      if (marker) { map.removeLayer(marker); marker = null; }
+      if (bbox) {
+        const south = parseFloat(bbox[0]), north = parseFloat(bbox[1]), west = parseFloat(bbox[2]), east = parseFloat(bbox[3]);
+        if ([south, north, west, east].every(Number.isFinite)) map.fitBounds([[south, west], [north, east]], { maxZoom: 17 });
+        else map.setView([lat, lon], 14);
+      } else map.setView([lat, lon], 15);
+      marker = L.marker([lat, lon]).addTo(map);
+      if (label) marker.bindPopup(esc(label)).openPopup();
+      hide();
+    }
+    function render() {
+      if (!items.length) { box.hidden = true; return; }
+      place();
+      box.innerHTML = items.map((it, i) =>
+        '<div class="gi' + (i === selIdx ? ' sel' : '') + '" data-i="' + i + '"><b>' + esc(it.mainText) + '</b><small>' + esc(it.subText) + '</small></div>'
+      ).join('');
+      box.hidden = false;
+      $$('.gi', box).forEach(el => el.addEventListener('click', () => pick(parseInt(el.dataset.i, 10))));
+    }
+    function pick(i) {
+      const it = items[i]; if (!it) return;
+      input.value = it.mainText;
+      goTo(it.lat, it.lon, it.bbox, it.label);
+    }
+    async function search(text) {
+      const coords = parseCoords(text);
+      if (coords) {
+        items = [{ mainText: coords.lat.toFixed(5) + ', ' + coords.lon.toFixed(5), subText: 'Coordinates (lat, lon)', lat: coords.lat, lon: coords.lon, bbox: null, label: 'Coordinates' }];
+        selIdx = 0; render(); return;
+      }
+      const mySeq = ++seq;
+      try {
+        const u = 'https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=6&q=' + encodeURIComponent(text);
+        const r = await fetch(u); const d = await r.json();
+        if (mySeq !== seq) return;
+        items = (Array.isArray(d) ? d : []).map(it => ({
+          mainText: (it.display_name || '').split(',')[0], subText: it.display_name || '',
+          lat: parseFloat(it.lat), lon: parseFloat(it.lon), bbox: it.boundingbox, label: it.display_name
+        }));
+        selIdx = items.length ? 0 : -1;
+        if (!items.length) { place(); box.innerHTML = '<div class="gi hint">No matching place found.</div>'; box.hidden = false; }
+        else render();
+      } catch (e) { if (mySeq === seq) { place(); box.innerHTML = '<div class="gi hint">Search failed: ' + esc(e.message || e) + '</div>'; box.hidden = false; } }
+    }
+    input.addEventListener('input', () => {
+      clearTimeout(timer); const v = input.value.trim();
+      if (!v) { hide(); return; }
+      timer = setTimeout(() => search(v), 400);
+    });
+    input.addEventListener('focus', () => { if (items.length) render(); });
+    input.addEventListener('keydown', e => {
+      if (e.key === 'ArrowDown' && items.length) { selIdx = Math.min(items.length - 1, selIdx + 1); render(); e.preventDefault(); }
+      else if (e.key === 'ArrowUp' && items.length) { selIdx = Math.max(0, selIdx - 1); render(); e.preventDefault(); }
+      else if (e.key === 'Enter') { e.preventDefault(); if (items.length) pick(Math.max(0, selIdx)); else { clearTimeout(timer); search(input.value.trim()); } }
+      else if (e.key === 'Escape') hide();
+    });
+    document.addEventListener('click', e => { if (!box.hidden && !box.contains(e.target) && e.target !== input) hide(); });
+    window.addEventListener('resize', () => { if (!box.hidden) place(); });
+    window.addEventListener('scroll', () => { if (!box.hidden) place(); }, true);
+  })();
   $('#addBtn').addEventListener('click', addFromInput);
+  (function wireFind() {
+    const modal = $('#findModal'), q = $('#findQ'), results = $('#findResults');
+    let seq = 0, timer = null;
+    $('#findBtn').addEventListener('click', () => { modal.hidden = false; q.value = ''; results.innerHTML = '<p class="hint">Search results appear here. Only public Feature and Map layers are shown — private or Esri-only layers won’t work with this tool.</p>'; setTimeout(() => q.focus(), 30); });
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+    async function runSearch(text) {
+      const mySeq = ++seq;
+      results.innerHTML = '<p class="hint">Searching…</p>';
+      try {
+        const term = text.trim();
+        const qstr = (term ? term + ' AND ' : '') + '(type:"Feature Service" OR type:"Map Service") AND -type:"Vector Tile Service"';
+        const u = 'https://www.arcgis.com/sharing/rest/search?f=json&num=14&sortField=numViews&sortOrder=desc&q=' + encodeURIComponent(qstr);
+        const r = await fetch(u); const d = await r.json();
+        if (mySeq !== seq) return; // a newer search superseded this one
+        if (d.error) throw new Error(d.error.message || 'Search failed.');
+        const items = (d.results || []).filter(it => it.url);
+        if (!items.length) { results.innerHTML = '<p class="hint">No matching public layers found. Try different or fewer words.</p>'; return; }
+        results.innerHTML = '';
+        for (const it of items) {
+          const thumb = it.thumbnail ? 'https://www.arcgis.com/sharing/rest/content/items/' + it.id + '/info/' + it.thumbnail + '?w=88' : '';
+          const row = document.createElement('div'); row.className = 'find-item';
+          row.innerHTML =
+            '<img loading="lazy" src="' + esc(thumb) + '" onerror="this.style.visibility=\'hidden\'" alt="">' +
+            '<div class="fi-body">' +
+              '<div class="fi-title">' + esc(it.title) + '</div>' +
+              '<div class="fi-meta"><span>' + esc(it.type) + '</span><span>by ' + esc(it.owner) + '</span>' + (it.numViews ? '<span>' + nf(it.numViews) + ' views</span>' : '') + '</div>' +
+              (it.snippet ? '<div class="fi-snippet">' + esc(it.snippet) + '</div>' : '') +
+            '</div>' +
+            '<button class="btn primary" type="button">Add</button>';
+          row.querySelector('button').addEventListener('click', () => {
+            $('#urlInput').value = it.url;
+            modal.hidden = true;
+            addFromInput();
+          });
+          results.appendChild(row);
+        }
+      } catch (e) { if (mySeq === seq) results.innerHTML = '<p class="hint">Could not search ArcGIS Online: ' + esc(e.message || e) + '</p>'; }
+    }
+    q.addEventListener('input', () => { clearTimeout(timer); const v = q.value; timer = setTimeout(() => runSearch(v), 450); });
+  })();
   $('#urlInput').addEventListener('keydown', e => { if (e.key === 'Enter') addFromInput(); });
   $('#btnZoomLayer').addEventListener('click', () => { const l = activeLayer(); if (l) zoomToLayer(l); else toast('Add a layer first.', 'warn'); });
   $('#helpBtn').addEventListener('click', () => { $('#helpModal').hidden = false; });
