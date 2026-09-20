@@ -206,7 +206,8 @@ button{cursor:pointer}
 </div>
 <script>
 (function(){
-  var PASSWORD = "Spg$dkm@3237";
+  var PASSWORD_B64 = "U3BnJGRrbUAzMjM3";
+  var PASSWORD = atob(PASSWORD_B64);
   var SESSION_KEY = "lg_unlocked";
   var gate = document.getElementById('gate');
   var pw = document.getElementById('gatePw');
