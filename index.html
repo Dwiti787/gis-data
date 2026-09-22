@@ -379,7 +379,7 @@ button{cursor:pointer}
     <div class="modal-head"><h2 id="helpTitle">How to use</h2><button class="x" data-close aria-label="Close">×</button></div>
     <div class="modal-body">
       <ol>
-        <li>Paste the layer address (it ends in <code>/FeatureServer/0</code> or <code>/MapServer/3</code>) and press <b>Add to map</b>. A service address without a number adds all of its layers. Don't have an address? Press <b>Find layer…</b> next to the bar to search ArcGIS Online by place or topic (e.g. “parcels Nodaway County”) and add a result with one click — only public Feature/Map layers are shown, since that's the only kind this tool can read.</li>
+        <li>Paste the layer address (it ends in <code>/FeatureServer/0</code> or <code>/MapServer/3</code>) and press <b>Add to map</b>. A service address without a number adds all of its layers — useful for a service that bundles, say, parcel polygons and parcel points together. You don't have to hunt down the raw address either: pasting an ArcGIS <b>app link</b> (a Map Viewer “Add layer from URL” link, a Field Maps/Experience Builder/StoryMaps link, anything with <code>?url=…</code> in it) or a <b>portal item page</b> link (<code>arcgis.com/home/item.html?id=…</code>) works too — the tool finds the real service address inside it automatically. Don't have any address? Press <b>Find layer…</b> next to the bar to search ArcGIS Online by place or topic (e.g. “parcels Nodaway County”) and add a result with one click — only public Feature/Map layers are shown, since that's the only kind this tool can read.</li>
         <li>Use <b>Go to place</b> on the ribbon to jump the map to any address, city, state, or country — or paste raw coordinates like <code>41.85, -87.65</code> (lat, lon) to jump straight there. Powered by OpenStreetMap's free search, so results are place names and addresses, not parcel data.</li>
         <li>Big layers such as county parcels only draw once you zoom in (the minimum zoom is shown on the layer card). Zoom in, then click any shape to see its attributes.</li>
         <li>Use <b>Definition query</b> on the layer card to filter, for example <code>municipality = 'OAK PARK'</code>. The <b>Attribute table</b> lists what is loaded in the current view.</li>
@@ -893,6 +893,40 @@ const GGCore = (function () {
     return u.split('#')[0].split('?')[0].trim().replace(/\/+$/, '').replace(/\/query$/i, '');
   }
 
+  /* Many links people copy are not the REST service address itself, but a link to an
+     ArcGIS *app* that has the service address buried inside it (Map Viewer's "Add layer
+     from URL" produces links like arcgis.com/apps/mapviewer/index.html?url=<service>,
+     and Field Maps / Experience Builder / StoryMaps do similar things), or a portal
+     "item" page (arcgis.com/home/item.html?id=<32-char id>). Unwrap both cases so the
+     tool can be pointed at the app link people actually have in hand. */
+  const isServiceUrl = u => /\/rest\/services\/.+\/(MapServer|FeatureServer|ImageServer)(\/\d+)?\/?($|[?#])/i.test(u || '');
+  function findEmbeddedServiceUrl(raw) {
+    if (isServiceUrl(raw)) return null; // already a direct service link – nothing to unwrap
+    try {
+      const u = new URL(raw);
+      for (const key of ['url', 'layer', 'serviceUrl', 'dataUrl', 'itemUrl']) {
+        const v = u.searchParams.get(key);
+        if (v && isServiceUrl(v)) return v;
+      }
+      for (const [, v] of u.searchParams) { if (isServiceUrl(v)) return v; }
+      if (u.hash) {
+        const hm = /[?&]url=([^&]+)/i.exec(u.hash);
+        if (hm) { const dec = decodeURIComponent(hm[1]); if (isServiceUrl(dec)) return dec; }
+      }
+    } catch (e) { /* not a valid URL on its own – ignore */ }
+    return null;
+  }
+  async function resolveArcgisItemUrl(raw) {
+    const m = /(?:[?&#/]id=|\/items\/)([0-9a-f]{32})\b/i.exec(raw);
+    if (!m) return null;
+    try {
+      const item = await arcRequest('https://www.arcgis.com/sharing/rest/content/items/' + m[1], { f: 'json' }, null);
+      if (item && item.url && isServiceUrl(item.url)) return item.url;
+      if (item && item.url) return item.url; // let arcRequest below report the real problem
+    } catch (e) { /* not a resolvable portal item – fall through to the normal error */ }
+    return null;
+  }
+
   /* ---------- map ---------- */
   const map = L.map('map', { preferCanvas: true, center: [41.84, -87.68], zoom: 10, maxZoom: 21, zoomControl: true });
   L.control.scale({ imperial: true, metric: true, position: 'bottomleft' }).addTo(map);
@@ -1001,14 +1035,25 @@ const GGCore = (function () {
   }
 
   async function addFromInput() {
-    const raw = $('#urlInput').value.trim();
+    let raw = $('#urlInput').value.trim();
     if (!raw) { toast('Paste a layer address first.', 'warn'); return; }
     if (!/^https?:\/\//i.test(raw)) { toast('The address must start with https:// (or http://).', 'warn'); return; }
-    const tm = /[?&]token=([^&#]+)/.exec(raw);
-    state.token = $('#tokenInput').value.trim() || (tm ? decodeURIComponent(tm[1]) : '');
-    const url = normalizeUrl(raw);
     $('#addBtn').disabled = true; busy(1); setMsg('Reading the service…');
     try {
+      // Unwrap app share-links (Map Viewer "Add layer from URL", Field Maps, Experience
+      // Builder, StoryMaps…) and portal item pages so pasting the link people actually
+      // have – not just a bare REST address – works too.
+      const embedded = findEmbeddedServiceUrl(raw);
+      if (embedded) {
+        raw = embedded; $('#urlInput').value = raw;
+        toast('That was an ArcGIS app link – using the service address found inside it.');
+      } else if (!isServiceUrl(raw)) {
+        const itemUrl = await resolveArcgisItemUrl(raw);
+        if (itemUrl) { raw = itemUrl; $('#urlInput').value = raw; toast('Resolved the ArcGIS item page to its service address.'); }
+      }
+      const tm = /[?&]token=([^&#]+)/.exec(raw);
+      state.token = $('#tokenInput').value.trim() || (tm ? decodeURIComponent(tm[1]) : '');
+      const url = normalizeUrl(raw);
       const meta = await arcRequest(url, { f: 'json' });
       if (Array.isArray(meta.fields)) {
         await addLayer(url, meta, true);
@@ -1021,9 +1066,9 @@ const GGCore = (function () {
           catch (e) { lastErr = e; }
         }
         if (!added) throw lastErr || new Error('No layer could be added.');
-        toast(added + ' layer' + (added > 1 ? 's' : '') + ' added. Only the first is switched on; tick the others to draw them.');
+        toast(added + ' layer' + (added > 1 ? 's' : '') + ' added (e.g. polygons + points from one service). Only the first is switched on; tick the others in Contents to draw them too.');
       } else {
-        throw new Error('This address is not an ArcGIS layer or service. It should end in /FeatureServer/0 or /MapServer/0.');
+        throw new Error('This address is not an ArcGIS REST layer or service, and no embedded service address or resolvable item id was found in it. Paste the raw address ending in /FeatureServer/0 or /MapServer/0 (or the whole service without a number), an ArcGIS app link that contains one, or a portal item page link.');
       }
     } catch (e) {
       if (e.code === 499 || e.code === 498) toast('This layer needs a token. Paste it in the Token box and try again.', 'err');
